@@ -139,6 +139,7 @@ cameras:
 
   max_room:
     ffmpeg:
+      hwaccel_args: []
       output_args:
         record: preset-record-generic-audio-aac
       inputs:
@@ -180,6 +181,7 @@ cameras:
 
   playroom:
     ffmpeg:
+      hwaccel_args: []
       output_args:
         record: preset-record-generic-audio-aac
       inputs:

@@ -43,7 +43,7 @@ spec:
           app:
             image:
               repository: ghcr.io/jbaker48/llm-router
-              tag: sha-9107cf7
+              tag: sha-d4999d1
             envFrom:
               - secretRef:
                   name: llm-router-secret

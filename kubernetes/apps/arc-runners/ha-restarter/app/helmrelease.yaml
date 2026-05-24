@@ -34,8 +34,8 @@ spec:
       spec:
         initContainers:
           - name: kube-inject
-            image: bitnami/kubectl:1.32
-            imagePullPolicy: IfNotPresent
+            image: bitnami/kubectl:latest
+            imagePullPolicy: Always
             command: ["cp", "/opt/bitnami/kubectl/bin/kubectl", "/usr/local/bin/kubectl"]
             volumeMounts:
               - name: kubectl-bin

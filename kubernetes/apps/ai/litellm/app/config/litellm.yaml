@@ -93,6 +93,103 @@ model_list:
       model: openrouter/openai/gpt-5.5-20260423
       api_key: {{ .LITELLM_OPENROUTER_API_KEY }}
 
+# -*= GSD workflow aliases =*-
+# gsd-execute / gsd-milestone → tier1 pool (cheap, high-volume)
+
+  - model_name: gsd-execute
+    litellm_params:
+      model: openrouter/minimax/minimax-m2.5:free
+      api_key: {{ .LITELLM_OPENROUTER_API_KEY }}
+
+  - model_name: gsd-execute
+    litellm_params:
+      model: openrouter/z-ai/glm-5.1-20260406
+      api_key: {{ .LITELLM_OPENROUTER_API_KEY }}
+
+  - model_name: gsd-execute
+    litellm_params:
+      model: openrouter/moonshotai/kimi-latest
+      api_key: {{ .LITELLM_OPENROUTER_API_KEY }}
+
+  - model_name: gsd-execute
+    litellm_params:
+      model: openrouter/google/gemini-3.1-flash-lite-preview
+      api_key: {{ .LITELLM_OPENROUTER_API_KEY }}
+
+  - model_name: gsd-milestone
+    litellm_params:
+      model: openrouter/minimax/minimax-m2.5:free
+      api_key: {{ .LITELLM_OPENROUTER_API_KEY }}
+
+  - model_name: gsd-milestone
+    litellm_params:
+      model: openrouter/z-ai/glm-5.1-20260406
+      api_key: {{ .LITELLM_OPENROUTER_API_KEY }}
+
+  - model_name: gsd-milestone
+    litellm_params:
+      model: openrouter/moonshotai/kimi-latest
+      api_key: {{ .LITELLM_OPENROUTER_API_KEY }}
+
+  - model_name: gsd-milestone
+    litellm_params:
+      model: openrouter/google/gemini-3.1-flash-lite-preview
+      api_key: {{ .LITELLM_OPENROUTER_API_KEY }}
+
+# gsd-plan / gsd-verify → tier2 (sonnet — planning needs more reasoning)
+
+  - model_name: gsd-plan
+    litellm_params:
+      model: anthropic/claude-sonnet-4-6
+      api_key: {{ .LITELLM_ANTHROPIC_API_KEY }}
+
+  - model_name: gsd-verify
+    litellm_params:
+      model: anthropic/claude-sonnet-4-6
+      api_key: {{ .LITELLM_ANTHROPIC_API_KEY }}
+
+# -*= Shorthand aliases =*-
+
+  - model_name: cheap
+    litellm_params:
+      model: openrouter/minimax/minimax-m2.5:free
+      api_key: {{ .LITELLM_OPENROUTER_API_KEY }}
+
+  - model_name: cheap
+    litellm_params:
+      model: openrouter/moonshotai/kimi-latest
+      api_key: {{ .LITELLM_OPENROUTER_API_KEY }}
+
+  - model_name: fast
+    litellm_params:
+      model: openrouter/google/gemini-3.1-flash-lite-preview
+      api_key: {{ .LITELLM_OPENROUTER_API_KEY }}
+
+  - model_name: fast
+    litellm_params:
+      model: openrouter/minimax/minimax-m2.5:free
+      api_key: {{ .LITELLM_OPENROUTER_API_KEY }}
+
+  - model_name: sonnet
+    litellm_params:
+      model: anthropic/claude-sonnet-4-6
+      api_key: {{ .LITELLM_ANTHROPIC_API_KEY }}
+
+  - model_name: default
+    litellm_params:
+      model: anthropic/claude-sonnet-4-6
+      api_key: {{ .LITELLM_ANTHROPIC_API_KEY }}
+
+  - model_name: opus
+    litellm_params:
+      model: anthropic/claude-opus-4-7
+      api_key: {{ .LITELLM_ANTHROPIC_API_KEY }}
+
+  - model_name: heavy
+    litellm_params:
+      model: anthropic/claude-opus-4-7
+      api_key: {{ .LITELLM_ANTHROPIC_API_KEY }}
+
 router_settings:
   routing_strategy: cost-based-completion
   num_retries: 3

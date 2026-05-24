@@ -9,4 +9,3 @@ resources:
   - ./litellm/ks.yaml
   - ./mcpo/ks.yaml
   - ./openwebui/ks.yaml
-  - ./llm-router/ks.yaml

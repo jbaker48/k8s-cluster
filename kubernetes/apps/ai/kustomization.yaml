@@ -7,5 +7,4 @@ resources:
   - ./garmin-ai-coach/ks.yaml
   - ./garmin-mcp/ks.yaml
   - ./litellm/ks.yaml
-  - ./mcpo/ks.yaml
   - ./openwebui/ks.yaml

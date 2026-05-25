@@ -20,6 +20,11 @@ model_list:
 
 # -*= Tier 1 — Cheap / high-volume =*-
 
+  - model_name: deepseek-v4-flash
+    litellm_params:
+      model: openrouter/deepseek/deepseek-v4-flash:free
+      api_key: {{ .LITELLM_OPENROUTER_API_KEY }}
+
   - model_name: minimax-free
     litellm_params:
       model: openrouter/minimax/minimax-m2.5:free
@@ -60,12 +65,12 @@ model_list:
 
   - model_name: tier1
     litellm_params:
-      model: openrouter/minimax/minimax-m2.5:free
+      model: openrouter/deepseek/deepseek-v4-flash:free
       api_key: {{ .LITELLM_OPENROUTER_API_KEY }}
 
   - model_name: tier1
     litellm_params:
-      model: openrouter/z-ai/glm-5.1-20260406
+      model: openrouter/minimax/minimax-m2.5:free
       api_key: {{ .LITELLM_OPENROUTER_API_KEY }}
 
   - model_name: tier1
@@ -98,12 +103,12 @@ model_list:
 
   - model_name: gsd-execute
     litellm_params:
-      model: openrouter/minimax/minimax-m2.5:free
+      model: openrouter/deepseek/deepseek-v4-flash:free
       api_key: {{ .LITELLM_OPENROUTER_API_KEY }}
 
   - model_name: gsd-execute
     litellm_params:
-      model: openrouter/z-ai/glm-5.1-20260406
+      model: openrouter/minimax/minimax-m2.5:free
       api_key: {{ .LITELLM_OPENROUTER_API_KEY }}
 
   - model_name: gsd-execute
@@ -111,9 +116,9 @@ model_list:
       model: openrouter/moonshotai/kimi-latest
       api_key: {{ .LITELLM_OPENROUTER_API_KEY }}
 
-  - model_name: gsd-execute
+  - model_name: gsd-milestone
     litellm_params:
-      model: openrouter/google/gemini-3.1-flash-lite-preview
+      model: openrouter/deepseek/deepseek-v4-flash:free
       api_key: {{ .LITELLM_OPENROUTER_API_KEY }}
 
   - model_name: gsd-milestone
@@ -123,17 +128,7 @@ model_list:
 
   - model_name: gsd-milestone
     litellm_params:
-      model: openrouter/z-ai/glm-5.1-20260406
-      api_key: {{ .LITELLM_OPENROUTER_API_KEY }}
-
-  - model_name: gsd-milestone
-    litellm_params:
       model: openrouter/moonshotai/kimi-latest
-      api_key: {{ .LITELLM_OPENROUTER_API_KEY }}
-
-  - model_name: gsd-milestone
-    litellm_params:
-      model: openrouter/google/gemini-3.1-flash-lite-preview
       api_key: {{ .LITELLM_OPENROUTER_API_KEY }}
 
 # gsd-plan / gsd-verify → tier2 (sonnet — planning needs more reasoning)
@@ -152,12 +147,17 @@ model_list:
 
   - model_name: cheap
     litellm_params:
-      model: openrouter/minimax/minimax-m2.5:free
+      model: openrouter/deepseek/deepseek-v4-flash:free
       api_key: {{ .LITELLM_OPENROUTER_API_KEY }}
 
   - model_name: cheap
     litellm_params:
-      model: openrouter/moonshotai/kimi-latest
+      model: openrouter/minimax/minimax-m2.5:free
+      api_key: {{ .LITELLM_OPENROUTER_API_KEY }}
+
+  - model_name: fast
+    litellm_params:
+      model: openrouter/deepseek/deepseek-v4-flash:free
       api_key: {{ .LITELLM_OPENROUTER_API_KEY }}
 
   - model_name: fast
@@ -165,9 +165,9 @@ model_list:
       model: openrouter/google/gemini-3.1-flash-lite-preview
       api_key: {{ .LITELLM_OPENROUTER_API_KEY }}
 
-  - model_name: fast
+  - model_name: deepseek
     litellm_params:
-      model: openrouter/minimax/minimax-m2.5:free
+      model: openrouter/deepseek/deepseek-v4-flash:free
       api_key: {{ .LITELLM_OPENROUTER_API_KEY }}
 
   - model_name: sonnet
@@ -177,8 +177,13 @@ model_list:
 
   - model_name: default
     litellm_params:
-      model: anthropic/claude-sonnet-4-6
-      api_key: {{ .LITELLM_ANTHROPIC_API_KEY }}
+      model: openrouter/deepseek/deepseek-v4-flash:free
+      api_key: {{ .LITELLM_OPENROUTER_API_KEY }}
+
+  - model_name: default
+    litellm_params:
+      model: openrouter/minimax/minimax-m2.5:free
+      api_key: {{ .LITELLM_OPENROUTER_API_KEY }}
 
   - model_name: opus
     litellm_params:
@@ -196,7 +201,10 @@ router_settings:
   fallbacks:
     - tier3: ["tier2"]
     - tier2: ["tier1"]
-    - tier1: ["minimax-m2.7", "claude-haiku-4-5"]
+    - tier1: ["deepseek-v4-flash", "minimax-m2.7", "claude-haiku-4-5"]
+    - default: ["tier1"]
+    - gsd-execute: ["minimax-m2.7", "claude-haiku-4-5"]
+    - gsd-milestone: ["minimax-m2.7", "claude-haiku-4-5"]
 
 general_settings:
   master_key: {{ .LITELLM_MASTER_KEY }}

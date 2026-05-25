@@ -196,7 +196,7 @@ model_list:
       api_key: {{ .LITELLM_ANTHROPIC_API_KEY }}
 
 router_settings:
-  routing_strategy: cost-based-completion
+  routing_strategy: simple-shuffle
   num_retries: 3
   fallbacks:
     - tier3: ["tier2"]

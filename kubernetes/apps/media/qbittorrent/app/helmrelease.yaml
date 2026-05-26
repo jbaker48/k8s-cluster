@@ -83,7 +83,7 @@ spec:
               VPN_SERVICE_PROVIDER: expressvpn
               VPN_TYPE: openvpn
               OPENVPN_PROTOCOL: tcp
-              SERVER_COUNTRIES: United States
+              SERVER_COUNTRIES: USA
               UPDATER_PERIOD: 24h
               FIREWALL_INPUT_PORTS: *port
               FIREWALL_OUTBOUND_SUBNETS: 10.69.0.0/16,10.96.0.0/16

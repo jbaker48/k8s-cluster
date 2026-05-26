@@ -81,8 +81,7 @@ spec:
               DOT: "off"
               DNS_ADDRESS: "10.96.0.10"
               VPN_SERVICE_PROVIDER: expressvpn
-              VPN_TYPE: openvpn
-              OPENVPN_PROTOCOL: udp
+              VPN_TYPE: wireguard
               SERVER_COUNTRIES: USA
               UPDATER_PERIOD: 24h
               FIREWALL_INPUT_PORTS: *port

@@ -41,7 +41,7 @@ spec:
           app:
             image:
               repository: ghcr.io/berriai/litellm
-              tag: main-stable
+              tag: v1.86.1
             # env:
             #   TZ: ${TIMEZONE}
             args:

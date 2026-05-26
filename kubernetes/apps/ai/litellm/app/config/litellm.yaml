@@ -83,12 +83,12 @@ model_list:
         strengths: ["code_generation", "analytical_reasoning", "technical_design"]
 
 # -*= Adaptive router aliases =*-
-# auto_router_config must be inside litellm_params
+# adaptive_router_config must be inside litellm_params (not auto_router_config — that's a file path)
 
   - model_name: default
     litellm_params:
       model: auto_router/adaptive_router
-      auto_router_config:
+      adaptive_router_config:
         available_models: ["deepseek-v4-flash", "minimax-free", "gemini-flash", "claude-haiku-4-5", "claude-sonnet-4-6"]
         weights:
           quality: 0.25
@@ -97,7 +97,7 @@ model_list:
   - model_name: tier1
     litellm_params:
       model: auto_router/adaptive_router
-      auto_router_config:
+      adaptive_router_config:
         available_models: ["deepseek-v4-flash", "minimax-free", "gemini-flash", "kimi-latest"]
         weights:
           quality: 0.2
@@ -106,7 +106,7 @@ model_list:
   - model_name: tier2
     litellm_params:
       model: auto_router/adaptive_router
-      auto_router_config:
+      adaptive_router_config:
         available_models: ["deepseek-v4-flash", "claude-haiku-4-5", "claude-sonnet-4-6"]
         weights:
           quality: 0.5
@@ -115,7 +115,7 @@ model_list:
   - model_name: tier3
     litellm_params:
       model: auto_router/adaptive_router
-      auto_router_config:
+      adaptive_router_config:
         available_models: ["claude-sonnet-4-6", "claude-opus-4-7", "gpt-5.5"]
         weights:
           quality: 0.8
@@ -126,7 +126,7 @@ model_list:
   - model_name: gsd-execute
     litellm_params:
       model: auto_router/adaptive_router
-      auto_router_config:
+      adaptive_router_config:
         available_models: ["deepseek-v4-flash", "minimax-free", "gemini-flash", "kimi-latest", "claude-haiku-4-5"]
         weights:
           quality: 0.15
@@ -135,7 +135,7 @@ model_list:
   - model_name: gsd-milestone
     litellm_params:
       model: auto_router/adaptive_router
-      auto_router_config:
+      adaptive_router_config:
         available_models: ["deepseek-v4-flash", "minimax-free", "claude-haiku-4-5"]
         weights:
           quality: 0.15
@@ -144,7 +144,7 @@ model_list:
   - model_name: gsd-plan
     litellm_params:
       model: auto_router/adaptive_router
-      auto_router_config:
+      adaptive_router_config:
         available_models: ["claude-haiku-4-5", "claude-sonnet-4-6"]
         weights:
           quality: 0.65
@@ -153,7 +153,7 @@ model_list:
   - model_name: gsd-verify
     litellm_params:
       model: auto_router/adaptive_router
-      auto_router_config:
+      adaptive_router_config:
         available_models: ["claude-haiku-4-5", "claude-sonnet-4-6"]
         weights:
           quality: 0.65
@@ -179,7 +179,7 @@ model_list:
   - model_name: heavy
     litellm_params:
       model: auto_router/adaptive_router
-      auto_router_config:
+      adaptive_router_config:
         available_models: ["claude-sonnet-4-6", "claude-opus-4-7", "gpt-5.5"]
         weights:
           quality: 0.85
@@ -188,7 +188,7 @@ model_list:
   - model_name: cheap
     litellm_params:
       model: auto_router/adaptive_router
-      auto_router_config:
+      adaptive_router_config:
         available_models: ["deepseek-v4-flash", "minimax-free", "gemini-flash"]
         weights:
           quality: 0.1
@@ -197,7 +197,7 @@ model_list:
   - model_name: fast
     litellm_params:
       model: auto_router/adaptive_router
-      auto_router_config:
+      adaptive_router_config:
         available_models: ["deepseek-v4-flash", "gemini-flash", "minimax-free"]
         weights:
           quality: 0.2

@@ -10,23 +10,14 @@ model_list:
         quality_tier: 1
         strengths: ["code_generation", "code_understanding", "general"]
 
-  - model_name: minimax-free
+  - model_name: deepseek-v4-flash
     litellm_params:
-      model: openrouter/minimax/minimax-m2.5:free
+      model: openrouter/deepseek/deepseek-v4-flash
       api_key: {{ .LITELLM_OPENROUTER_API_KEY }}
     model_info:
       adaptive_router_preferences:
         quality_tier: 1
-        strengths: ["general", "writing"]
-
-  - model_name: gemini-flash
-    litellm_params:
-      model: openrouter/google/gemini-3.1-flash-lite-preview
-      api_key: {{ .LITELLM_OPENROUTER_API_KEY }}
-    model_info:
-      adaptive_router_preferences:
-        quality_tier: 1
-        strengths: ["code_generation", "factual_lookup"]
+        strengths: ["code_generation", "code_understanding", "general"]
 
   - model_name: kimi-latest
     litellm_params:
@@ -35,16 +26,7 @@ model_list:
     model_info:
       adaptive_router_preferences:
         quality_tier: 1
-        strengths: ["general", "writing"]
-
-  - model_name: minimax-m2.7
-    litellm_params:
-      model: openrouter/minimax/minimax-m2.7
-      api_key: {{ .LITELLM_OPENROUTER_API_KEY }}
-    model_info:
-      adaptive_router_preferences:
-        quality_tier: 2
-        strengths: ["general", "writing"]
+        strengths: ["code_generation", "general", "writing"]
 
   - model_name: claude-haiku-4-5
     litellm_params:
@@ -89,7 +71,7 @@ model_list:
     litellm_params:
       model: auto_router/adaptive_router
       adaptive_router_config:
-        available_models: ["deepseek-v4-flash", "minimax-free", "gemini-flash", "claude-haiku-4-5", "claude-sonnet-4-6"]
+        available_models: ["deepseek-v4-flash", "kimi-latest", "claude-haiku-4-5", "claude-sonnet-4-6"]
         weights:
           quality: 0.25
           cost: 0.75
@@ -98,7 +80,7 @@ model_list:
     litellm_params:
       model: auto_router/adaptive_router
       adaptive_router_config:
-        available_models: ["deepseek-v4-flash", "minimax-free", "gemini-flash", "kimi-latest"]
+        available_models: ["deepseek-v4-flash", "kimi-latest"]
         weights:
           quality: 0.2
           cost: 0.8
@@ -151,7 +133,7 @@ model_list:
     litellm_params:
       model: auto_router/adaptive_router
       adaptive_router_config:
-        available_models: ["deepseek-v4-flash", "minimax-free", "gemini-flash"]
+        available_models: ["deepseek-v4-flash", "kimi-latest"]
         weights:
           quality: 0.1
           cost: 0.9
@@ -160,7 +142,7 @@ model_list:
     litellm_params:
       model: auto_router/adaptive_router
       adaptive_router_config:
-        available_models: ["deepseek-v4-flash", "gemini-flash", "minimax-free"]
+        available_models: ["deepseek-v4-flash", "kimi-latest"]
         weights:
           quality: 0.2
           cost: 0.8

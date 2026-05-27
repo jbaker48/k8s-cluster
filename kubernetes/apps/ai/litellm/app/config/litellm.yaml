@@ -121,44 +121,6 @@ model_list:
           quality: 0.8
           cost: 0.2
 
-# -*= GSD workflow aliases =*-
-
-  - model_name: gsd-execute
-    litellm_params:
-      model: auto_router/adaptive_router
-      adaptive_router_config:
-        available_models: ["deepseek-v4-flash", "minimax-free", "gemini-flash", "kimi-latest", "claude-haiku-4-5"]
-        weights:
-          quality: 0.15
-          cost: 0.85
-
-  - model_name: gsd-milestone
-    litellm_params:
-      model: auto_router/adaptive_router
-      adaptive_router_config:
-        available_models: ["deepseek-v4-flash", "minimax-free", "claude-haiku-4-5"]
-        weights:
-          quality: 0.15
-          cost: 0.85
-
-  - model_name: gsd-plan
-    litellm_params:
-      model: auto_router/adaptive_router
-      adaptive_router_config:
-        available_models: ["claude-haiku-4-5", "claude-sonnet-4-6"]
-        weights:
-          quality: 0.65
-          cost: 0.35
-
-  - model_name: gsd-verify
-    litellm_params:
-      model: auto_router/adaptive_router
-      adaptive_router_config:
-        available_models: ["claude-haiku-4-5", "claude-sonnet-4-6"]
-        weights:
-          quality: 0.65
-          cost: 0.35
-
 # -*= Direct shorthand aliases =*-
 
   - model_name: sonnet
@@ -215,10 +177,6 @@ router_settings:
     - tier3: ["tier2"]
     - tier2: ["tier1"]
     - tier1: ["claude-haiku-4-5"]
-    - gsd-execute: ["claude-haiku-4-5"]
-    - gsd-milestone: ["claude-haiku-4-5"]
-    - gsd-plan: ["claude-sonnet-4-6"]
-    - gsd-verify: ["claude-sonnet-4-6"]
     - default: ["claude-haiku-4-5"]
 
 general_settings:
@@ -226,6 +184,8 @@ general_settings:
   database_url: "postgresql://{{ .LITELLM_POSTGRES_USER }}:{{ .LITELLM_POSTGRES_PASSWORD }}@postgres17-rw.database.svc.cluster.local/litellm"
 
 litellm_settings:
+  success_callback: ["prometheus"]
+  failure_callback: ["prometheus"]
   num_retries: 3
   request_timeout: 180
   allowed_fails: 3

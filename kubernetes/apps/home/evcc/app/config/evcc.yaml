@@ -100,8 +100,8 @@ tariffs:
     type: fixed
     price: 0.363          # Shoulder default — applies to any hour not in a zone
     zones:
-      - hours: 11-14
-        price: 0          # Free window (11:00–13:59)
+      - hours: 11-13
+        price: 0      # Free window (11:00–13:59) — tiny non-zero prevents evcc battery planner, HA handles fast charging
       - hours: 16-23
         price: 0.495      # Peak window (16:00–22:59)
   feedin:

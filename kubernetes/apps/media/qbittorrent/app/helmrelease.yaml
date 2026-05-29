@@ -81,11 +81,8 @@ spec:
               DOT: "off"
               DNS_ADDRESS: "10.96.0.10"
               VPN_SERVICE_PROVIDER: custom
-              VPN_TYPE: wireguard
-              VPN_INTERFACE: wg0
-              WIREGUARD_ENDPOINT_PORT: "51820"
-              VPN_PORT_FORWARDING: "on"
-              VPN_PORT_FORWARDING_PROVIDER: protonvpn
+              VPN_TYPE: openvpn
+              OPENVPN_CUSTOM_CONFIG: /gluetun/custom.ovpn
               FIREWALL_INPUT_PORTS: *port
               FIREWALL_OUTBOUND_SUBNETS: 10.69.0.0/16,10.96.0.0/16
             envFrom:
@@ -164,3 +161,12 @@ spec:
           - path: /media/Downloads
       tmp:
         type: emptyDir
+      gluetun-custom-ovpn:
+        type: secret
+        name: qbittorrent-secrets
+        advancedMounts:
+          qbittorrent:
+            gluetun:
+              - path: /gluetun/custom.ovpn
+                subPath: custom.ovpn
+                readOnly: true

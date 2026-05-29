@@ -138,6 +138,8 @@ kind: ClientTrafficPolicy
 metadata:
   name: envoy
 spec:
+  connection:
+    bufferLimit: 4Mi
   clientIPDetection:
     xForwardedFor:
       trustedCIDRs:

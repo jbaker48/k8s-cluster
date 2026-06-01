@@ -1,182 +1,19 @@
 model_list:
-# -*= Individual models (with adaptive router quality metadata) =*-
-
-  - model_name: deepseek-v4-flash
+  # Anthropic models
+  - model_name: claude-opus-4-7
     litellm_params:
-      model: openrouter/deepseek/deepseek-v4-flash
-      api_key: {{ .LITELLM_OPENROUTER_API_KEY }}
-      # NOTE: deepseek-v4-flash is a reasoning model. LiteLLM v1.86.1's streaming
-      # /v1/messages transform emits thinking_delta into a text-typed block (esp.
-      # with tools), which HANGS Claude Code. Server-side reasoning-disable via
-      # config does not work in this version. Until LiteLLM is upgraded, do NOT
-      # point Claude Code at this model — use claude-sonnet-4-6 / haiku instead.
-    model_info:
-      adaptive_router_preferences:
-        quality_tier: 1
-        strengths: ["code_generation", "code_understanding", "general"]
-
-  - model_name: kimi-latest
-    litellm_params:
-      model: openrouter/moonshotai/kimi-latest
-      api_key: {{ .LITELLM_OPENROUTER_API_KEY }}
-    model_info:
-      adaptive_router_preferences:
-        quality_tier: 1
-        strengths: ["code_generation", "general", "writing"]
-
-  - model_name: claude-haiku-4-5
-    litellm_params:
-      model: anthropic/claude-haiku-4-5-20251001
+      model: anthropic/claude-opus-4-7
       api_key: {{ .LITELLM_ANTHROPIC_API_KEY }}
-    model_info:
-      adaptive_router_preferences:
-        quality_tier: 2
-        strengths: ["code_generation", "code_understanding", "general"]
 
   - model_name: claude-sonnet-4-6
     litellm_params:
       model: anthropic/claude-sonnet-4-6
       api_key: {{ .LITELLM_ANTHROPIC_API_KEY }}
-    model_info:
-      adaptive_router_preferences:
-        quality_tier: 3
-        strengths: ["code_generation", "code_understanding", "analytical_reasoning", "technical_design"]
 
-  - model_name: claude-opus-4-7
-    litellm_params:
-      model: anthropic/claude-opus-4-7
-      api_key: {{ .LITELLM_ANTHROPIC_API_KEY }}
-    model_info:
-      adaptive_router_preferences:
-        quality_tier: 3
-        strengths: ["code_generation", "analytical_reasoning", "technical_design", "writing"]
-
-  - model_name: gpt-5.5
-    litellm_params:
-      model: openrouter/openai/gpt-5.5-20260423
-      api_key: {{ .LITELLM_OPENROUTER_API_KEY }}
-    model_info:
-      adaptive_router_preferences:
-        quality_tier: 3
-        strengths: ["code_generation", "analytical_reasoning", "technical_design"]
-
-# -*= Adaptive router aliases =*-
-# adaptive_router_config must be inside litellm_params (not auto_router_config — that's a file path)
-
-  - model_name: default
-    litellm_params:
-      model: auto_router/adaptive_router
-      adaptive_router_config:
-        available_models: ["deepseek-v4-flash", "kimi-latest", "claude-haiku-4-5", "claude-sonnet-4-6"]
-        weights:
-          quality: 0.25
-          cost: 0.75
-
-  - model_name: tier1
-    litellm_params:
-      model: auto_router/adaptive_router
-      adaptive_router_config:
-        available_models: ["deepseek-v4-flash", "kimi-latest"]
-        weights:
-          quality: 0.2
-          cost: 0.8
-
-  - model_name: tier2
-    litellm_params:
-      model: auto_router/adaptive_router
-      adaptive_router_config:
-        available_models: ["deepseek-v4-flash", "claude-haiku-4-5", "claude-sonnet-4-6"]
-        weights:
-          quality: 0.5
-          cost: 0.5
-
-  - model_name: tier3
-    litellm_params:
-      model: auto_router/adaptive_router
-      adaptive_router_config:
-        available_models: ["claude-sonnet-4-6", "claude-opus-4-7", "gpt-5.5"]
-        weights:
-          quality: 0.8
-          cost: 0.2
-
-# -*= Direct shorthand aliases =*-
-
-  - model_name: sonnet
-    litellm_params:
-      model: anthropic/claude-sonnet-4-6
-      api_key: {{ .LITELLM_ANTHROPIC_API_KEY }}
-
-  - model_name: haiku
+  - model_name: claude-haiku-4-5
     litellm_params:
       model: anthropic/claude-haiku-4-5-20251001
       api_key: {{ .LITELLM_ANTHROPIC_API_KEY }}
 
-  - model_name: opus
-    litellm_params:
-      model: anthropic/claude-opus-4-7
-      api_key: {{ .LITELLM_ANTHROPIC_API_KEY }}
-
-  - model_name: heavy
-    litellm_params:
-      model: auto_router/adaptive_router
-      adaptive_router_config:
-        available_models: ["claude-sonnet-4-6", "claude-opus-4-7", "gpt-5.5"]
-        weights:
-          quality: 0.85
-          cost: 0.15
-
-  - model_name: cheap
-    litellm_params:
-      model: auto_router/adaptive_router
-      adaptive_router_config:
-        available_models: ["deepseek-v4-flash", "kimi-latest"]
-        weights:
-          quality: 0.1
-          cost: 0.9
-
-  - model_name: fast
-    litellm_params:
-      model: auto_router/adaptive_router
-      adaptive_router_config:
-        available_models: ["deepseek-v4-flash", "kimi-latest"]
-        weights:
-          quality: 0.2
-          cost: 0.8
-
-  - model_name: deepseek
-    litellm_params:
-      model: openrouter/deepseek/deepseek-v4-flash
-      api_key: {{ .LITELLM_OPENROUTER_API_KEY }}
-
-router_settings:
-  routing_strategy: simple-shuffle
-  num_retries: 3
-  fallbacks:
-    - tier3: ["tier2"]
-    - tier2: ["tier1"]
-    - tier1: ["claude-haiku-4-5"]
-    - default: ["claude-haiku-4-5"]
-
-general_settings:
-  master_key: {{ .LITELLM_MASTER_KEY }}
-  database_url: "postgresql://{{ .LITELLM_POSTGRES_USER }}:{{ .LITELLM_POSTGRES_PASSWORD }}@postgres17-rw.database.svc.cluster.local/litellm"
-
 litellm_settings:
-  success_callback: ["prometheus"]
-  failure_callback: ["prometheus"]
-  num_retries: 3
-  request_timeout: 180
-  allowed_fails: 3
-  cooldown_time: 30
-  drop_params: true
-  modify_params: true
-  telemetry: false
-  retry: true
-  add_function_to_prompt: true
-  set_verbose: false
-  cache: true
-  cache_params:
-    type: redis
-    namespace: "litellm_caching"
-    host: dragonfly.database.svc.cluster.local.
-    port: 6379
+  master_key: {{ .LITELLM_MASTER_KEY }}

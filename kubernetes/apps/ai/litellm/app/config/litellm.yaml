@@ -8,11 +8,13 @@ model_list:
       # Disable reasoning output. LiteLLM v1.86.1's streaming OpenAI->Anthropic
       # transform emits thinking_delta into a text-typed block for reasoning
       # models (esp. with tools), which hangs Claude Code's strict SSE parser.
-      # merge_reasoning_content_in_choices does NOT cover the tool-calling path;
-      # excluding reasoning entirely yields a clean stream. Re-enable once the
-      # LiteLLM streaming transform is fixed in a newer release.
+      # Excluding reasoning entirely yields a clean stream. allowed_openai_params
+      # is required so the global drop_params:true does not strip `reasoning`
+      # before it reaches OpenRouter. Re-enable once LiteLLM fixes the transform.
       reasoning:
         enabled: false
+      allowed_openai_params:
+        - reasoning
     model_info:
       adaptive_router_preferences:
         quality_tier: 1
@@ -24,6 +26,8 @@ model_list:
       api_key: {{ .LITELLM_OPENROUTER_API_KEY }}
       reasoning:
         enabled: false
+      allowed_openai_params:
+        - reasoning
     model_info:
       adaptive_router_preferences:
         quality_tier: 1
@@ -154,6 +158,8 @@ model_list:
       api_key: {{ .LITELLM_OPENROUTER_API_KEY }}
       reasoning:
         enabled: false
+      allowed_openai_params:
+        - reasoning
 
 router_settings:
   routing_strategy: simple-shuffle

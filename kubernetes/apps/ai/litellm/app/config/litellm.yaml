@@ -5,11 +5,14 @@ model_list:
     litellm_params:
       model: openrouter/deepseek/deepseek-v4-flash
       api_key: {{ .LITELLM_OPENROUTER_API_KEY }}
-      # Reasoning models: merge reasoning into content as <think> text so the
-      # OpenAI->Anthropic STREAMING transform emits text_delta into the text
-      # block instead of thinking_delta into it (LiteLLM v1.86.1 bug that hangs
-      # Claude Code's strict SSE parser).
-      merge_reasoning_content_in_choices: true
+      # Disable reasoning output. LiteLLM v1.86.1's streaming OpenAI->Anthropic
+      # transform emits thinking_delta into a text-typed block for reasoning
+      # models (esp. with tools), which hangs Claude Code's strict SSE parser.
+      # merge_reasoning_content_in_choices does NOT cover the tool-calling path;
+      # excluding reasoning entirely yields a clean stream. Re-enable once the
+      # LiteLLM streaming transform is fixed in a newer release.
+      reasoning:
+        enabled: false
     model_info:
       adaptive_router_preferences:
         quality_tier: 1
@@ -19,7 +22,8 @@ model_list:
     litellm_params:
       model: openrouter/moonshotai/kimi-latest
       api_key: {{ .LITELLM_OPENROUTER_API_KEY }}
-      merge_reasoning_content_in_choices: true
+      reasoning:
+        enabled: false
     model_info:
       adaptive_router_preferences:
         quality_tier: 1
@@ -148,7 +152,8 @@ model_list:
     litellm_params:
       model: openrouter/deepseek/deepseek-v4-flash
       api_key: {{ .LITELLM_OPENROUTER_API_KEY }}
-      merge_reasoning_content_in_choices: true
+      reasoning:
+        enabled: false
 
 router_settings:
   routing_strategy: simple-shuffle

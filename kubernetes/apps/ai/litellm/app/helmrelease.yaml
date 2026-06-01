@@ -27,8 +27,8 @@ spec:
         replicas: 2
         strategy: RollingUpdate
         rollingUpdate:
-          maxUnavailable: 0
-          maxSurge: 1
+          unavailable: 0
+          surge: 1
 
         annotations:
           reloader.stakater.com/auto: "true"

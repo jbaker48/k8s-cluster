@@ -15,6 +15,12 @@ spec:
   superuserSecret:
     name: cloudnative-pg-secret
   enableSuperuserAccess: true
+  affinity:
+    tolerations:
+      - key: dedicated
+        operator: Equal
+        value: frigate
+        effect: NoSchedule
   postgresql:
     parameters:
       max_connections: "400"

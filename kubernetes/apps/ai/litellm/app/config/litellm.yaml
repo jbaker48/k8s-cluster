@@ -3,17 +3,13 @@ model_list:
 
   - model_name: deepseek-v4-flash
     litellm_params:
-      model: openrouter/deepseek/deepseek-v4-flash:free
-      api_key: {{ .LITELLM_OPENROUTER_API_KEY }}
-    model_info:
-      adaptive_router_preferences:
-        quality_tier: 1
-        strengths: ["code_generation", "code_understanding", "general"]
-
-  - model_name: deepseek-v4-flash
-    litellm_params:
       model: openrouter/deepseek/deepseek-v4-flash
       api_key: {{ .LITELLM_OPENROUTER_API_KEY }}
+      # Reasoning models: merge reasoning into content as <think> text so the
+      # OpenAI->Anthropic STREAMING transform emits text_delta into the text
+      # block instead of thinking_delta into it (LiteLLM v1.86.1 bug that hangs
+      # Claude Code's strict SSE parser).
+      merge_reasoning_content_in_choices: true
     model_info:
       adaptive_router_preferences:
         quality_tier: 1
@@ -23,6 +19,7 @@ model_list:
     litellm_params:
       model: openrouter/moonshotai/kimi-latest
       api_key: {{ .LITELLM_OPENROUTER_API_KEY }}
+      merge_reasoning_content_in_choices: true
     model_info:
       adaptive_router_preferences:
         quality_tier: 1
@@ -149,8 +146,9 @@ model_list:
 
   - model_name: deepseek
     litellm_params:
-      model: openrouter/deepseek/deepseek-v4-flash:free
+      model: openrouter/deepseek/deepseek-v4-flash
       api_key: {{ .LITELLM_OPENROUTER_API_KEY }}
+      merge_reasoning_content_in_choices: true
 
 router_settings:
   routing_strategy: simple-shuffle

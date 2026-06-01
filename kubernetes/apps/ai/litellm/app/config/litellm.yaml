@@ -5,16 +5,11 @@ model_list:
     litellm_params:
       model: openrouter/deepseek/deepseek-v4-flash
       api_key: {{ .LITELLM_OPENROUTER_API_KEY }}
-      # Disable reasoning output. LiteLLM v1.86.1's streaming OpenAI->Anthropic
-      # transform emits thinking_delta into a text-typed block for reasoning
-      # models (esp. with tools), which hangs Claude Code's strict SSE parser.
-      # Excluding reasoning entirely yields a clean stream. allowed_openai_params
-      # is required so the global drop_params:true does not strip `reasoning`
-      # before it reaches OpenRouter. Re-enable once LiteLLM fixes the transform.
-      reasoning:
-        enabled: false
-      allowed_openai_params:
-        - reasoning
+      # NOTE: deepseek-v4-flash is a reasoning model. LiteLLM v1.86.1's streaming
+      # /v1/messages transform emits thinking_delta into a text-typed block (esp.
+      # with tools), which HANGS Claude Code. Server-side reasoning-disable via
+      # config does not work in this version. Until LiteLLM is upgraded, do NOT
+      # point Claude Code at this model — use claude-sonnet-4-6 / haiku instead.
     model_info:
       adaptive_router_preferences:
         quality_tier: 1
@@ -24,10 +19,6 @@ model_list:
     litellm_params:
       model: openrouter/moonshotai/kimi-latest
       api_key: {{ .LITELLM_OPENROUTER_API_KEY }}
-      reasoning:
-        enabled: false
-      allowed_openai_params:
-        - reasoning
     model_info:
       adaptive_router_preferences:
         quality_tier: 1
@@ -156,10 +147,6 @@ model_list:
     litellm_params:
       model: openrouter/deepseek/deepseek-v4-flash
       api_key: {{ .LITELLM_OPENROUTER_API_KEY }}
-      reasoning:
-        enabled: false
-      allowed_openai_params:
-        - reasoning
 
 router_settings:
   routing_strategy: simple-shuffle

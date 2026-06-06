@@ -30,7 +30,7 @@ model_list:
 
   - model_name: qwen3-coder
     litellm_params:
-      model: openrouter/qwen/qwen3-coder-480b-a35b-instruct
+      model: openrouter/qwen/qwen3-coder
       api_key: {{ .LITELLM_OPENROUTER_API_KEY }}
     model_info:
       adaptive_router_preferences:
@@ -223,6 +223,7 @@ router_settings:
     - tier3: ["tier2"]
     - tier2: ["tier1"]
     - tier1: ["claude-haiku-4-5"]
+    - fallback: ["default"]
     - default: ["claude-haiku-4-5"]
 
 general_settings:

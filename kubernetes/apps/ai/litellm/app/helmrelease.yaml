@@ -47,8 +47,8 @@ spec:
             image:
               repository: ghcr.io/berriai/litellm
               tag: v1.86.1
-            # env:
-            #   TZ: ${TIMEZONE}
+            env:
+              TZ: ${TIMEZONE}
             args:
               - "--config"
               - "/app/proxy_config.yaml"

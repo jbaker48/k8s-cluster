@@ -157,10 +157,10 @@ model_list:
     litellm_params:
       model: auto_router/adaptive_router
       adaptive_router_config:
-        available_models: ["qwen3-coder", "deepseek-v4-pro", "qwen3-plus"]
+        available_models: ["qwen3-coder", "qwen3-plus", "deepseek-v4-flash"]
         weights:
-          quality: 0.65
-          cost: 0.35
+          quality: 0.45
+          cost: 0.55
 
   - model_name: heavy
     litellm_params:

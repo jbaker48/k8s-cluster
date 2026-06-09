@@ -9,9 +9,9 @@ spec:
     {
       "cniVersion": "0.3.1",
       "name": "multus-iot",
-      "type": "macvlan",
+      "type": "ipvlan",
       "master": "ethSel0.10",
-      "mode": "bridge",
+      "mode": "l2",
       "ipam": {
         "type": "static"
       }

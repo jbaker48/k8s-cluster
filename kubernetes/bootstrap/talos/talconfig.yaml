@@ -40,6 +40,10 @@ nodes:
         mtu: 1500
         vip:
           ip: *talosControlplaneVip
+        vlans:
+          - vlanId: 10
+            dhcp: false
+            mtu: 1500
 
   - hostname: "talos02"
     ipAddress: "10.20.0.15"
@@ -60,6 +64,10 @@ nodes:
         mtu: 1500
         vip:
           ip: *talosControlplaneVip
+        vlans:
+          - vlanId: 10
+            dhcp: false
+            mtu: 1500
 
   - hostname: "talos03"
     ipAddress: "10.20.0.16"
@@ -78,6 +86,10 @@ nodes:
         mtu: 1500
         vip:
           ip: *talosControlplaneVip
+        vlans:
+          - vlanId: 10
+            dhcp: false
+            mtu: 1500
 
 # # Global patches
 # patches:

@@ -119,12 +119,15 @@ spec:
       serviceAccountName: multus
       initContainers:
         - name: install-cni-plugins
-          # Installs macvlan, static, ipvlan which are absent from Talos's Cilium-only CNI bin dir
-          image: ghcr.io/containernetworking/plugins:v1.9.1
+          # containernetworking/plugins has no container image — fetch the tarball directly.
+          # Installs macvlan, static, ipvlan which are absent from Talos's Cilium-only CNI bin dir.
+          image: alpine:3.21
           command:
             - /bin/sh
             - -c
-            - cp /opt/cni/bin/macvlan /opt/cni/bin/ipvlan /opt/cni/bin/static /host/opt/cni/bin/
+            - |
+              wget -qO- https://github.com/containernetworking/plugins/releases/download/v1.9.1/cni-plugins-linux-amd64-v1.9.1.tgz | \
+              tar -xzC /host/opt/cni/bin ./macvlan ./static ./ipvlan
           securityContext:
             privileged: true
           volumeMounts:

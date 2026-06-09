@@ -50,7 +50,7 @@ spec:
         controller: *app
         type: LoadBalancer
         annotations:
-          io.cilium/lb-ipam-ips: ${SVC_UNIFI_ADDR}
+          lbipam.cilium.io/ips: ${SVC_UNIFI_ADDR}
         externalTrafficPolicy: Cluster
         ports:
           http:

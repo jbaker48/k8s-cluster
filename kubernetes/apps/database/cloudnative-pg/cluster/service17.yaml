@@ -5,7 +5,7 @@ metadata:
   name: postgres-lb17
   namespace: database
   annotations:
-    io.cilium/lb-ipam-ips: ${SVC_POSTGRES_ADDR}
+    lbipam.cilium.io/ips: ${SVC_POSTGRES_ADDR}
 spec:
   type: LoadBalancer
   ports:

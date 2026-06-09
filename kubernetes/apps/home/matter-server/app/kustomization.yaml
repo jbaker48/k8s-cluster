@@ -7,4 +7,4 @@ resources:
   - ./helmrelease.yaml
   - ./nad.yaml
   - ./ocirepository.yaml
-  - ../../../../templates/volsync
+  - ./pvc.yaml

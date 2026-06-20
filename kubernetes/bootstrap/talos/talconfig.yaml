@@ -44,6 +44,8 @@ nodes:
           - vlanId: 10
             dhcp: false
             mtu: 1500
+            addresses:
+              - 192.168.10.11/32
 
   - hostname: "talos02"
     ipAddress: "10.20.0.15"
@@ -68,6 +70,8 @@ nodes:
           - vlanId: 10
             dhcp: false
             mtu: 1500
+            addresses:
+              - 192.168.10.12/32
 
   - hostname: "talos03"
     ipAddress: "10.20.0.16"
@@ -90,6 +94,8 @@ nodes:
           - vlanId: 10
             dhcp: false
             mtu: 1500
+            addresses:
+              - 192.168.10.13/32
 
 # # Global patches
 # patches:

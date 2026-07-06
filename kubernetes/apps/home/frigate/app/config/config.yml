@@ -21,6 +21,15 @@ detectors:
     type: openvino
     device: GPU
 
+model:
+  path: /openvino-model/ssdlite_mobilenet_v2.xml
+  labelmap_path: /labelmap/coco-80.txt
+  width: 300
+  height: 300
+  input_tensor: nhwc
+  input_pixel_format: bgr
+  model_type: ssd
+
 # Global ffmpeg configuration
 ffmpeg:
   global_args: ["-hide_banner", "-loglevel", "warning"]

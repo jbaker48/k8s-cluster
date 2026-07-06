@@ -23,7 +23,7 @@ detectors:
 
 model:
   path: /openvino-model/ssdlite_mobilenet_v2.xml
-  labelmap_path: /labelmap/coco-80.txt
+  labelmap_path: /openvino-model/coco_91cl_bkgr.txt
   width: 300
   height: 300
   input_tensor: nhwc
@@ -238,6 +238,7 @@ cameras:
 
   garage:
     ffmpeg:
+      hwaccel_args: []
       output_args:
         record: preset-record-generic-audio-aac
       inputs:
@@ -284,6 +285,7 @@ cameras:
 
   backyard:
     ffmpeg:
+      hwaccel_args: []
       output_args:
         record: preset-record-generic-audio-aac
       inputs:

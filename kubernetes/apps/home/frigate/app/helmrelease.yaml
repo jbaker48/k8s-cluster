@@ -81,12 +81,7 @@ spec:
                   failureThreshold: 90
 
     defaultPodOptions:
-      tolerations:
-        - key: dedicated
-          value: frigate
-          effect: NoSchedule
       nodeSelector:
-        kubernetes.io/hostname: talos02
         intel.feature.node.kubernetes.io/gpu: "true"
     service:
       app:
@@ -140,12 +135,6 @@ spec:
         sizeLimit: 4Gi
         globalMounts:
           - path: /dev/shm
-      usb:
-        type: hostPath
-        hostPath: /dev/bus/usb
-        hostPathType: Directory
-        globalMounts:
-          - path: /dev/bus/usb
       media:
         existingClaim: frigate-nfs
         globalMounts:

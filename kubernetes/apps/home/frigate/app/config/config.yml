@@ -17,9 +17,9 @@ database:
   path: /data/frigate.db
 
 detectors:
-  coral:
-    type: edgetpu
-    device: usb
+  ov:
+    type: openvino
+    device: GPU
 
 # Global ffmpeg configuration
 ffmpeg:

@@ -50,14 +50,14 @@ spec:
           migrate:
             image:
               repository: ghcr.io/jbaker48/garmin-ai-coach-backend
-              tag: sha-e571dc2
+              tag: sha-3a06d65
             command: ["alembic", "upgrade", "head"]
             envFrom: *envFrom
         containers:
           app:
             image:
               repository: ghcr.io/jbaker48/garmin-ai-coach-backend
-              tag: sha-e571dc2
+              tag: sha-3a06d65
             env:
               CELERY_BROKER_URL: redis://dragonfly.database.svc.cluster.local:6379/0
               CONFIG_PATH: /app/config/my_training_config.yaml
@@ -106,7 +106,7 @@ spec:
           app:
             image:
               repository: ghcr.io/jbaker48/garmin-ai-coach-frontend
-              tag: sha-e571dc2
+              tag: sha-3a06d65
             probes:
               liveness:
                 enabled: true
@@ -145,7 +145,7 @@ spec:
           app:
             image:
               repository: ghcr.io/jbaker48/garmin-ai-coach-backend
-              tag: sha-e571dc2
+              tag: sha-3a06d65
             command:
               - celery
               - -A

@@ -230,7 +230,6 @@ spec:
           backend:
             app:
               - path: /app/config
-                readOnly: true
           celery-worker:
             app:
               - path: /app/config

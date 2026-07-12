@@ -62,6 +62,7 @@ spec:
               CELERY_BROKER_URL: redis://dragonfly.database.svc.cluster.local:6379/0
               CONFIG_PATH: /app/config/my_training_config.yaml
               CORS_ORIGINS: https://coach.bakerhaus.cloud
+              GARMINCONNECT_TOKENS: /app/output/.garminconnect
             envFrom: *envFrom
             probes:
               liveness:
@@ -156,6 +157,7 @@ spec:
             env:
               CELERY_BROKER_URL: redis://dragonfly.database.svc.cluster.local:6379/0
               CONFIG_PATH: /app/config/my_training_config.yaml
+              GARMINCONNECT_TOKENS: /app/output/.garminconnect
             envFrom: *envFrom
             securityContext:
               allowPrivilegeEscalation: false

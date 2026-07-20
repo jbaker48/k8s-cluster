@@ -62,7 +62,7 @@ spec:
           app:
             image:
               repository: ghcr.io/home-operations/home-assistant
-              tag: 2026.3.3@sha256:16c50c92379b507ef0de98ea5371f2a0cabf917991d9f7d1c52f612c5557388a
+              tag: 2026.7.1@sha256:77612bf97ff111c5517f708b7893e6d4400e0104db24cdd69e30105c95b7bfcc
             # command:
             #   - python3
             #   - -m

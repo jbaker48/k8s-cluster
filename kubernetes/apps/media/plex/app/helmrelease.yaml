@@ -154,3 +154,4 @@ spec:
         globalMounts:
           - path: /media
             readOnly: true
+# test: exclusion-gate non-critical path check (D-12 case 1)

@@ -90,4 +90,7 @@ jobs:
         name: Apply gate label
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh pr edit "${{ github.event.pull_request.number }}" --add-label "gate/human-required"
+        run: |
+          gh pr edit "${{ github.event.pull_request.number }}" \
+            --repo "${{ github.repository }}" \
+            --add-label "gate/human-required"

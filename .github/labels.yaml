@@ -16,3 +16,5 @@
 - { name: "type/break",              color: "f6412d" }
 # Uncategorized
 - { name: "hold",                    color: "ee0701" }
+# Gate
+- { name: "gate/human-required",     color: "b60205", description: "Excluded from AI auto-merge — human must merge" }

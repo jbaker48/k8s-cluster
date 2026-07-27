@@ -1,0 +1,23 @@
+---
+talos:
+  reason: >-
+    Talos node OS configuration — a bad node-level config can take down the
+    control plane or worker nodes.
+  paths:
+    - "kubernetes/bootstrap/talos/**"
+
+kubernetes-core:
+  reason: >-
+    Cluster-wide GitOps/bootstrap config — a bad change here can silently
+    break every app in the cluster, not just one.
+  paths:
+    - "kubernetes/bootstrap/**"
+    - "kubernetes/flux/**"
+
+cilium:
+  reason: >-
+    Cluster CNI — breaking changes here can take down all pod-to-pod
+    networking cluster-wide.
+  paths:
+    - "kubernetes/apps/kube-system/cilium/**"
+    - "kubernetes/flux/repositories/helm/cilium.yaml"

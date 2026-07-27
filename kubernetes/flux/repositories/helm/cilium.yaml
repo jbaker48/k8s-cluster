@@ -9,3 +9,4 @@ spec:
   interval: 1h
   url: https://helm.cilium.io
 # test: exclusion-gate critical path check (D-12 case 2)
+# test: exclusion-gate critical path check (D-12 case 2) - retrigger

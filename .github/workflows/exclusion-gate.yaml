@@ -24,17 +24,16 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh api "repos/${{ github.repository }}/contents/.github/exclusion-gate.yaml" \
+          gh api "repos/${{ github.repository }}/contents/.github/exclusion-gate.yaml?ref=${{ github.event.pull_request.base.sha }}" \
             --jq '.content' | base64 -d > /tmp/exclusion-gate.yaml
 
       - name: Build paths-filter map
         id: build-filters
         run: |
-          FILTERS=$(yq -o=json '{
-            "talos": .talos.paths,
-            "kubernetes-core": .["kubernetes-core"].paths,
-            "cilium": .cilium.paths
-          }' /tmp/exclusion-gate.yaml)
+          # Derived generically from exclusion-gate.yaml's top-level keys so a new
+          # category added to the config is automatically enforced here — no hardcoded
+          # category list to keep in sync (see CR-02, 01-REVIEW.md).
+          FILTERS=$(yq -o=json 'with_entries(.value = .value.paths)' /tmp/exclusion-gate.yaml)
           {
             echo "filters<<EOF"
             echo "$FILTERS"
@@ -50,24 +49,20 @@ jobs:
       - name: Compute excluded flag and reasons
         id: gate
         env:
-          TALOS: ${{ steps.filter.outputs.talos }}
-          K8S_CORE: ${{ steps.filter.outputs.kubernetes-core }}
-          CILIUM: ${{ steps.filter.outputs.cilium }}
+          FILTER_OUTPUTS: ${{ toJSON(steps.filter.outputs) }}
         run: |
+          # Iterates category keys straight from exclusion-gate.yaml (in file order, so
+          # ordering stays deterministic and stable as categories are added) instead of
+          # enumerating them a second time here (see CR-02, 01-REVIEW.md).
           EXCLUDED=false
           REASONS=""
-          if [[ "$TALOS" == "true" ]]; then
-            EXCLUDED=true
-            REASONS="$REASONS- $(yq '.talos.reason' /tmp/exclusion-gate.yaml)"$'\n'
-          fi
-          if [[ "$K8S_CORE" == "true" ]]; then
-            EXCLUDED=true
-            REASONS="$REASONS- $(yq '.["kubernetes-core"].reason' /tmp/exclusion-gate.yaml)"$'\n'
-          fi
-          if [[ "$CILIUM" == "true" ]]; then
-            EXCLUDED=true
-            REASONS="$REASONS- $(yq '.cilium.reason' /tmp/exclusion-gate.yaml)"$'\n'
-          fi
+          for key in $(yq -o=json '. | keys' /tmp/exclusion-gate.yaml | jq -r '.[]'); do
+            MATCHED=$(echo "$FILTER_OUTPUTS" | jq -r --arg k "$key" '.[$k] // "false"')
+            if [[ "$MATCHED" == "true" ]]; then
+              EXCLUDED=true
+              REASONS="$REASONS- $(yq eval ".[\"${key}\"].reason" /tmp/exclusion-gate.yaml)"$'\n'
+            fi
+          done
           echo "excluded=$EXCLUDED" >> "$GITHUB_OUTPUT"
           {
             echo "reasons<<EOF"

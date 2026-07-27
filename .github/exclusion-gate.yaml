@@ -13,6 +13,8 @@ kubernetes-core:
   paths:
     - "kubernetes/bootstrap/**"
     - "kubernetes/flux/**"
+    - "kubernetes/components/**"
+    - "kubernetes/templates/**"
 
 cilium:
   reason: >-

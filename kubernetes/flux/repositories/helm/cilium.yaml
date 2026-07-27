@@ -10,3 +10,4 @@ spec:
   url: https://helm.cilium.io
 # test: exclusion-gate critical path check (D-12 case 2)
 # test: exclusion-gate critical path check (D-12 case 2) - retrigger
+# test: exclusion-gate critical path check (D-12 case 2) - second retrigger post label-fix

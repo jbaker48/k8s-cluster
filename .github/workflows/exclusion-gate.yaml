@@ -1,0 +1,93 @@
+---
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+name: "Exclusion Gate"
+
+on:
+  pull_request_target:
+    branches: ["main"]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  exclusion-check:
+    name: Exclusion Check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    outputs:
+      excluded: ${{ steps.gate.outputs.excluded }}
+    steps:
+      - name: Fetch exclusion config from base branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/${{ github.repository }}/contents/.github/exclusion-gate.yaml" \
+            --jq '.content' | base64 -d > /tmp/exclusion-gate.yaml
+
+      - name: Build paths-filter map
+        id: build-filters
+        run: |
+          FILTERS=$(yq -o=json '{
+            "talos": .talos.paths,
+            "kubernetes-core": .["kubernetes-core"].paths,
+            "cilium": .cilium.paths
+          }' /tmp/exclusion-gate.yaml)
+          {
+            echo "filters<<EOF"
+            echo "$FILTERS"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Evaluate path filters
+        id: filter
+        uses: dorny/paths-filter@v4
+        with:
+          filters: ${{ steps.build-filters.outputs.filters }}
+
+      - name: Compute excluded flag and reasons
+        id: gate
+        env:
+          TALOS: ${{ steps.filter.outputs.talos }}
+          K8S_CORE: ${{ steps.filter.outputs.kubernetes-core }}
+          CILIUM: ${{ steps.filter.outputs.cilium }}
+        run: |
+          EXCLUDED=false
+          REASONS=""
+          if [[ "$TALOS" == "true" ]]; then
+            EXCLUDED=true
+            REASONS="$REASONS- $(yq '.talos.reason' /tmp/exclusion-gate.yaml)"$'\n'
+          fi
+          if [[ "$K8S_CORE" == "true" ]]; then
+            EXCLUDED=true
+            REASONS="$REASONS- $(yq '.["kubernetes-core"].reason' /tmp/exclusion-gate.yaml)"$'\n'
+          fi
+          if [[ "$CILIUM" == "true" ]]; then
+            EXCLUDED=true
+            REASONS="$REASONS- $(yq '.cilium.reason' /tmp/exclusion-gate.yaml)"$'\n'
+          fi
+          echo "excluded=$EXCLUDED" >> "$GITHUB_OUTPUT"
+          {
+            echo "reasons<<EOF"
+            echo "$REASONS"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - if: steps.gate.outputs.excluded == 'true'
+        name: Comment on excluded PR
+        uses: mshick/add-pr-comment@v3
+        with:
+          message-id: "exclusion-gate/${{ github.event.pull_request.number }}"
+          message: |
+            🚫 **Human merge required** — this PR touches cluster-critical infrastructure:
+
+            ${{ steps.gate.outputs.reasons }}
+            This PR is excluded from AI-driven auto-merge regardless of review verdict.
+
+      - if: steps.gate.outputs.excluded == 'true'
+        name: Apply gate label
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh pr edit "${{ github.event.pull_request.number }}" --add-label "gate/human-required"

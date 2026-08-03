@@ -1,0 +1,44 @@
+---
+# yaml-language-server: $schema=https://raw.githubusercontent.com/fluxcd-community/flux2-schemas/main/helmrelease-helm-v2.json
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: k8s-cluster-ci
+  namespace: arc-runners
+spec:
+  chartRef:
+    kind: OCIRepository
+    name: gha-runner-scale-set-k8s-cluster-ci
+    namespace: arc-runners
+  interval: 1h
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    cleanupOnFail: true
+    remediation:
+      strategy: rollback
+      retries: 3
+  dependsOn:
+    - name: actions-runner-controller
+      namespace: arc-systems
+  values:
+    githubConfigUrl: "https://github.com/jbaker48/k8s-cluster"
+    githubConfigSecret: arc-github-secret-k8s-cluster
+    minRunners: 0
+    maxRunners: 1
+    controllerServiceAccount:
+      namespace: arc-systems
+      name: actions-runner-controller-gha-rs-controller
+    template:
+      metadata:
+        labels:
+          workload: k8s-cluster-ci-runner
+      spec:
+        serviceAccountName: k8s-cluster-ci
+        automountServiceAccountToken: false
+        containers:
+          - name: runner
+            image: ghcr.io/actions/actions-runner:2.334.0
+            imagePullPolicy: IfNotPresent
+            command: ["/home/runner/run.sh"]

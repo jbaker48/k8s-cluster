@@ -6,6 +6,7 @@ resources:
   - ./ocirepository.yaml
   - ./externalsecret.yaml
   - ./serviceaccount.yaml
+  - ./helmrelease.yaml
 labels:
   - pairs:
       app.kubernetes.io/name: k8s-cluster-ci

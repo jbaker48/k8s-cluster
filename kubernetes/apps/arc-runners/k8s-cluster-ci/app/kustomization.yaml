@@ -7,6 +7,7 @@ resources:
   - ./externalsecret.yaml
   - ./serviceaccount.yaml
   - ./helmrelease.yaml
+  - ./networkpolicy.yaml
 labels:
   - pairs:
       app.kubernetes.io/name: k8s-cluster-ci

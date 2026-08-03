@@ -37,6 +37,17 @@ spec:
       spec:
         serviceAccountName: k8s-cluster-ci
         automountServiceAccountToken: false
+        # cluster-internal CoreDNS forwards "." straight to the node resolver
+        # and has no zone delegation for ${SECRET_DOMAIN} to k8s-gateway, so
+        # in-cluster pods can't resolve litellm.${SECRET_DOMAIN} via kube-dns
+        # (confirmed: an unrestricted debug pod in this namespace also gets
+        # NXDOMAIN — not a CiliumNetworkPolicy egress issue). Pin the hostname
+        # to envoy-internal's stable ClusterIP so the runner can still reach
+        # litellm only via the gateway, matching D-03's intended path.
+        hostAliases:
+          - ip: "10.96.221.236"
+            hostnames:
+              - "litellm.${SECRET_DOMAIN}"
         containers:
           - name: runner
             image: ghcr.io/actions/actions-runner:2.334.0

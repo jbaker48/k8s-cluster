@@ -43,6 +43,12 @@ spec:
     #    unverified in research) - curl hung until its own --max-time timeout
     #    rather than connecting or being refused. Swapped to the documented
     #    toEndpoints fallback selecting envoy-internal's actual pod labels.
+    #    Port must be 10443 (the Service's real targetPort on the pod), not
+    #    443 (the externally-exposed Service port) - toEndpoints enforces
+    #    post-DNAT for locally-initiated Service traffic, unlike toServices
+    #    which is Service-port-aware. Confirmed live: port 443 here silently
+    #    dropped traffic (client hang); port 10443 connects and litellm's
+    #    /health/liveliness returns 200 through the envoy-internal gateway.
     - toEndpoints:
         - matchLabels:
             app.kubernetes.io/name: envoy
@@ -50,5 +56,5 @@ spec:
             io.kubernetes.pod.namespace: network
       toPorts:
         - ports:
-            - port: "443"
+            - port: "10443"
               protocol: TCP

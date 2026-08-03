@@ -25,13 +25,26 @@ spec:
               - matchPattern: "*"
 
     # 2. GitHub Actions control-plane endpoints (registration, job pickup,
-    #    checkout, log/result upload)
+    #    checkout, log/result upload). *.blob.core.windows.net added after
+    #    live diagnosis: cilium-dbg fqdn cache list showed the runner's
+    #    results-receiver.actions.githubusercontent.com lookup resolving
+    #    (redirecting) to productionresultssa10.blob.core.windows.net ->
+    #    20.209.226.129/20.209.226.1/20.209.227.33 - Azure Blob Storage,
+    #    the actual backend GitHub's newer Results service uses to upload
+    #    job logs/completion status. Without this, cilium-dbg monitor showed
+    #    repeated "Policy denied" SYN drops to those IPs: the job's actual
+    #    test step succeeded every time in ~1-2s, but the run never resolved
+    #    past "in_progress" and eventually reported conclusion: cancelled
+    #    (GH-side timeout waiting for a completion signal that never arrived).
+    #    Required for ANY job on this runner to report completion - not
+    #    litellm/D-03-specific, so scoped under this rule, not rule 3.
     - toFQDNs:
         - matchName: "github.com"
         - matchName: "api.github.com"
         - matchName: "codeload.github.com"
         - matchPattern: "*.actions.githubusercontent.com"
         - matchName: "objects.githubusercontent.com"
+        - matchPattern: "*.blob.core.windows.net"
       toPorts:
         - ports:
             - port: "443"

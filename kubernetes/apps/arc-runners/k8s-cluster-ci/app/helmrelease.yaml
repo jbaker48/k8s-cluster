@@ -42,10 +42,14 @@ spec:
         # in-cluster pods can't resolve litellm.${SECRET_DOMAIN} via kube-dns
         # (confirmed: an unrestricted debug pod in this namespace also gets
         # NXDOMAIN — not a CiliumNetworkPolicy egress issue). Pin the hostname
-        # to envoy-internal's stable ClusterIP so the runner can still reach
-        # litellm only via the gateway, matching D-03's intended path.
+        # to envoy-internal's gateway address so the runner can still reach
+        # litellm only via the gateway, matching D-03's intended path. Uses
+        # the repo's existing SVC_INTERNAL_GW_ADDR substitution variable (the
+        # same Gateway's IPAM-pinned LoadBalancer IP) rather than the
+        # dynamically-allocated ClusterIP, which is not guaranteed stable
+        # across a Service recreation.
         hostAliases:
-          - ip: "10.96.221.236"
+          - ip: "${SVC_INTERNAL_GW_ADDR}"
             hostnames:
               - "litellm.${SECRET_DOMAIN}"
         containers:

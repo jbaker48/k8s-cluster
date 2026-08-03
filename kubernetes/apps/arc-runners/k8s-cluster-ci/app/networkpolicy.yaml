@@ -5,6 +5,16 @@ metadata:
   name: k8s-cluster-ci-egress
   namespace: arc-runners
 spec:
+  # SCOPE: only selects ephemeral per-job runner Pods (workload:
+  # k8s-cluster-ci-runner, set via helmrelease.yaml template.metadata.labels
+  # — applies solely to the Pod template for jobs, not the chart's other
+  # resources). The scale-set's persistent listener Pod
+  # (k8s-cluster-ci-<hash>-listener, which polls GitHub for job assignments)
+  # runs in the arc-systems namespace under different labels and is
+  # therefore NOT covered by this policy. This is an intentional scope
+  # boundary matching PLAN.md's threat model (T-02-03: "k8s-cluster-ci
+  # runner pod egress") — the listener never executes PR-controlled
+  # workflow code, unlike the ephemeral runner Pods this policy restricts.
   endpointSelector:
     matchLabels:
       workload: k8s-cluster-ci-runner
@@ -44,7 +54,11 @@ spec:
         - matchName: "codeload.github.com"
         - matchPattern: "*.actions.githubusercontent.com"
         - matchName: "objects.githubusercontent.com"
-        - matchPattern: "*.blob.core.windows.net"
+        # Narrowed to the observed shard prefix rather than the bare
+        # *.blob.core.windows.net suffix, which would permit egress to any
+        # Azure Storage account (attacker-controlled ones included) under
+        # that shared multi-tenant domain, not just GitHub's own backend.
+        - matchPattern: "productionresultssa*.blob.core.windows.net"
       toPorts:
         - ports:
             - port: "443"

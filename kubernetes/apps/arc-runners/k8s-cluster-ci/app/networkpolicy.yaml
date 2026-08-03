@@ -1,0 +1,48 @@
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: k8s-cluster-ci-egress
+  namespace: arc-runners
+spec:
+  endpointSelector:
+    matchLabels:
+      workload: k8s-cluster-ci-runner
+  egress:
+    # 1. DNS resolution - required before toFQDNs can match anything
+    - toEndpoints:
+        - matchLabels:
+            k8s-app: kube-dns
+            io.kubernetes.pod.namespace: kube-system
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+          rules:
+            dns:
+              - matchPattern: "*"
+
+    # 2. GitHub Actions control-plane endpoints (registration, job pickup,
+    #    checkout, log/result upload)
+    - toFQDNs:
+        - matchName: "github.com"
+        - matchName: "api.github.com"
+        - matchName: "codeload.github.com"
+        - matchPattern: "*.actions.githubusercontent.com"
+        - matchName: "objects.githubusercontent.com"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+
+    # 3. litellm - via envoy-internal only, never litellm's Service directly
+    - toServices:
+        - k8sService:
+            serviceName: envoy-internal
+            namespace: network
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP

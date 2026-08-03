@@ -5,3 +5,4 @@ kind: Kustomization
 resources:
   - ./namespace.yaml
   - ./ha-restarter/ks.yaml
+  - ./k8s-cluster-ci/ks.yaml

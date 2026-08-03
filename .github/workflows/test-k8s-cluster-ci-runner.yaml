@@ -1,0 +1,28 @@
+---
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+name: "Test k8s-cluster-ci Runner Reachability"
+
+on:
+  workflow_dispatch: {}
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
+
+jobs:
+  reach-litellm:
+    name: Reach litellm internal endpoint
+    permissions:
+      contents: read
+    runs-on: k8s-cluster-ci
+    timeout-minutes: 5
+    steps:
+      - name: Curl litellm health endpoint via envoy-internal
+        run: |
+          # /health/liveliness is litellm's unauthenticated health-check route
+          # (used by this deployment's own liveness probe — no API key required
+          # for this test). The domain is referenced only via the secrets
+          # context, which GitHub auto-masks in logs; it is never assigned to
+          # a separate env var or echoed anywhere in this step.
+          curl --fail --show-error --max-time 15 \
+            "https://litellm.${{ secrets.SECRET_DOMAIN }}/health/liveliness"

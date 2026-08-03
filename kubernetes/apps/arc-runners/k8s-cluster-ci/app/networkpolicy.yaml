@@ -37,11 +37,17 @@ spec:
             - port: "443"
               protocol: TCP
 
-    # 3. litellm - via envoy-internal only, never litellm's Service directly
-    - toServices:
-        - k8sService:
-            serviceName: envoy-internal
-            namespace: network
+    # 3. litellm - via envoy-internal only, never litellm's Service directly.
+    #    toServices (k8sService selector) silently dropped traffic live on
+    #    this cluster's Cilium version (VALIDATION.md Assumption A3, confirmed
+    #    unverified in research) - curl hung until its own --max-time timeout
+    #    rather than connecting or being refused. Swapped to the documented
+    #    toEndpoints fallback selecting envoy-internal's actual pod labels.
+    - toEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: envoy
+            gateway.envoyproxy.io/owning-gateway-name: envoy-internal
+            io.kubernetes.pod.namespace: network
       toPorts:
         - ports:
             - port: "443"

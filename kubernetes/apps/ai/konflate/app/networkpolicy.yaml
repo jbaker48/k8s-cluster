@@ -13,10 +13,28 @@ spec:
       app.kubernetes.io/name: konflate
       app.kubernetes.io/instance: konflate
   ingress:
+    # 1. MCP path - ARC runner pods call konflate's MCP endpoint directly
+    #    (bypassing envoy-internal), matching the direct-Service egress rule
+    #    at kubernetes/apps/arc-runners/k8s-cluster-ci/app/networkpolicy.yaml
+    #    rule 4.
     - fromEndpoints:
         - matchLabels:
             workload: k8s-cluster-ci-runner
             io.kubernetes.pod.namespace: arc-runners
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP
+    # 2. Browser/httpRoute path - requests routed through envoy-internal
+    #    arrive at konflate carrying Envoy's own pod identity, not the
+    #    caller's (the same "Envoy presents its own pod identity" problem
+    #    the egress rule 4 comment diagnoses, mirrored here for ingress so
+    #    httpRoute.enabled: true in helmrelease.yaml is actually reachable).
+    - fromEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: envoy
+            gateway.envoyproxy.io/owning-gateway-name: envoy-internal
+            io.kubernetes.pod.namespace: network
       toPorts:
         - ports:
             - port: "8080"

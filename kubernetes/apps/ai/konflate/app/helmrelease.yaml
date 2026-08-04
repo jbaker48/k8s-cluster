@@ -24,6 +24,20 @@ spec:
       clusterPath: ""
       mcp: true
       renderForkPrs: false
+    # NOTE (WR-02, phase 03 code review): the "skipped (missing secret)"
+    # log lines referencing GitRepository/flux-system/home-kubernetes and
+    # "secret flux-system/github-deploy-key missing username/password" are
+    # NOT emitted by konflate. konflate's chart ships serviceAccount with
+    # automountServiceAccountToken off by default specifically because
+    # "konflate talks to forges, not the cluster API" (upstream
+    # values.yaml) — it has no code path that reads Kubernetes GitRepository
+    # CRs, so there is no chart flag to disable here. The log noise is
+    # Flux's own source-controller reconciling the cluster's ROOT
+    # GitRepository (kubernetes/flux/config/cluster.yaml): its url is
+    # https://github.com/jbaker48/k8s-cluster (HTTPS) but its secretRef
+    # (github-deploy-key) only carries an SSH identity/known_hosts pair,
+    # not username/password — a pre-existing, unrelated secret-format
+    # mismatch in the cluster's Flux bootstrap, out of scope for this app.
     secret:
       existingSecret: konflate-secret
     httpRoute:

@@ -85,3 +85,18 @@ spec:
         - ports:
             - port: "10443"
               protocol: TCP
+
+    # 4. konflate - direct Service call, bypassing envoy-internal entirely.
+    #    Routing through envoy-internal would present Envoy's own pod identity
+    #    to Cilium (not the runner's), breaking konflate's ingress-restricting
+    #    CiliumNetworkPolicy (D-07). See konflate/app/networkpolicy.yaml and
+    #    03-RESEARCH.md Common Pitfall 1.
+    - toEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: konflate
+            app.kubernetes.io/instance: konflate
+            io.kubernetes.pod.namespace: ai
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP

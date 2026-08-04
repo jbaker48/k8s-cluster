@@ -1,0 +1,23 @@
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: konflate-ingress
+  namespace: ai
+spec:
+  # konflate's chart selectorLabels: app.kubernetes.io/name=konflate,
+  # app.kubernetes.io/instance=konflate (Release.Name) — confirmed via
+  # konflate.selectorLabels helper in the chart's _helpers.tpl.
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: konflate
+      app.kubernetes.io/instance: konflate
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            workload: k8s-cluster-ci-runner
+            io.kubernetes.pod.namespace: arc-runners
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP

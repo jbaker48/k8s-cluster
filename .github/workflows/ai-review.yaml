@@ -9,7 +9,14 @@ name: "AI Review"
 # github_token (the default GITHUB_TOKEN, identity github-actions[bot]) is the
 # SAME identity flux-diff.yaml's mshick/add-pr-comment step uses, so a live run
 # can silently overwrite an unrelated flux-diff comment (confirmed: it happened
-# to PR #1063's helmrelease diff comment during this plan's proof runs).
+# to PR #1063's helmrelease diff comment during Plan 04-01's proof runs).
+#
+# Plan 04-02 temporarily restored this trigger for its draft-skip/concurrency-dedup
+# live-proof window (2026-08-05T11:04Z-11:07Z, throwaway PR #1076/branch
+# test/ai-review-draft-skip, closed and branch-deleted after verification; see
+# 04-02-SUMMARY.md Deviations) and confirmed no other PR's comments were touched
+# during that window before removing it again here.
+#
 # workflow_dispatch-only until a dedicated bot identity (PAT/GitHub App) for
 # this workflow removes the shared-identity collision — then restore
 # pull_request_target with types: [opened, reopened, synchronize, ready_for_review].

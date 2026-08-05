@@ -16,6 +16,10 @@ on:
         description: "PR number to review"
         required: false
         default: ""
+      force_review:
+        description: "bypass the action's diff-unchanged dedup guard for a forced re-review (workflow_dispatch only)"
+        required: false
+        default: "false"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.number || github.ref }}
@@ -80,6 +84,7 @@ jobs:
           tool_mcp_servers: "konflate=http://konflate.ai.svc.cluster.local:8080/mcp"
           standards_file: .claude/CLAUDE.md
           publish_review_comment: "true"
+          force_review: ${{ inputs.force_review || 'false' }}
 
       - name: Surface tool harness evidence trail
         if: always()

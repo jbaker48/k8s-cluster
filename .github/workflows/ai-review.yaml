@@ -43,18 +43,12 @@ concurrency:
 jobs:
   review:
     name: AI PR Review
-    if: ${{ !github.event.pull_request.draft }}
     runs-on: k8s-cluster-ci
     timeout-minutes: 15
     permissions:
       contents: read
       pull-requests: write
     steps:
-      - name: Checkout base branch
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.event.pull_request.base.sha || github.sha }}
-
       - name: Bootstrap gh CLI and python3 (not preinstalled on this runner image)
         run: |
           set -euo pipefail
@@ -71,7 +65,29 @@ jobs:
           sudo ln -sf /tmp/python/bin/python3 /usr/local/bin/python3
           gh --version && python3 --version
 
+      # workflow_dispatch never populates github.event.pull_request (the
+      # pull_request_target trigger that used to populate it was deliberately
+      # removed, see comment block above) -- so a job-level
+      # `if: ${{ !github.event.pull_request.draft }}` always evaluates
+      # `!null` (true) and never actually skips a draft PR. Resolve the real
+      # draft status from the dispatched pr_number/repo inputs instead, and
+      # gate the remaining steps on that resolved value (WR-01 finding).
+      - name: Resolve PR metadata
+        id: pr
+        run: |
+          set -euo pipefail
+          echo "draft=$(gh pr view "${{ inputs.pr_number }}" --repo "${{ inputs.repo || github.repository }}" --json isDraft -q .isDraft)" >> "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Checkout base branch
+        if: ${{ steps.pr.outputs.draft != 'true' }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.sha }}
+
       - name: AI PR Review
+        if: ${{ steps.pr.outputs.draft != 'true' }}
         uses: misospace/pr-reviewer-action@6f4fb724b222f6d9a83096d6b41cd636ef3a044e # v2.1.10
         with:
           github_token: ${{ github.token }}
@@ -102,7 +118,7 @@ jobs:
           force_review: ${{ inputs.force_review || 'false' }}
 
       - name: Surface tool harness evidence trail
-        if: always()
+        if: ${{ always() && steps.pr.outputs.draft != 'true' }}
         run: |
           # The action itself only logs an aggregate count of tool calls
           # ("N tool call(s) executed in M round(s)") — it never prints

@@ -2,10 +2,18 @@
 # yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
 name: "AI Review"
 
+# Automatic pull_request_target trigger deliberately removed (see 04-01-SUMMARY.md
+# deviations): pr-reviewer-action's GitHub-platform comment publish path uses
+# `gh pr comment --edit-last`, which edits the LAST comment posted by the
+# authenticated identity — not a marker-based lookup. This workflow's
+# github_token (the default GITHUB_TOKEN, identity github-actions[bot]) is the
+# SAME identity flux-diff.yaml's mshick/add-pr-comment step uses, so a live run
+# can silently overwrite an unrelated flux-diff comment (confirmed: it happened
+# to PR #1063's helmrelease diff comment during this plan's proof runs).
+# workflow_dispatch-only until a dedicated bot identity (PAT/GitHub App) for
+# this workflow removes the shared-identity collision — then restore
+# pull_request_target with types: [opened, reopened, synchronize, ready_for_review].
 on:
-  pull_request_target:
-    branches: ["main"]
-    types: [opened, reopened, synchronize, ready_for_review]
   workflow_dispatch:
     inputs:
       repo:

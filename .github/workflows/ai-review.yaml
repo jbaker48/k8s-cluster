@@ -69,14 +69,21 @@ jobs:
       # pull_request_target trigger that used to populate it was deliberately
       # removed, see comment block above) -- so a job-level
       # `if: ${{ !github.event.pull_request.draft }}` always evaluates
-      # `!null` (true) and never actually skips a draft PR. Resolve the real
-      # draft status from the dispatched pr_number/repo inputs instead, and
-      # gate the remaining steps on that resolved value (WR-01 finding).
+      # `!null` (true) and never actually skips a draft PR, and
+      # `github.event.pull_request.base.sha` always falls through to
+      # `github.sha` (whatever ref the operator happened to have selected in
+      # the dispatch dropdown, unrelated to the pr_number being reviewed).
+      # Resolve both the real draft status and the PR's actual base SHA from
+      # the dispatched pr_number/repo inputs instead (WR-01/WR-02 findings).
       - name: Resolve PR metadata
         id: pr
         run: |
           set -euo pipefail
-          echo "draft=$(gh pr view "${{ inputs.pr_number }}" --repo "${{ inputs.repo || github.repository }}" --json isDraft -q .isDraft)" >> "$GITHUB_OUTPUT"
+          gh pr view "${{ inputs.pr_number }}" \
+            --repo "${{ inputs.repo || github.repository }}" \
+            --json isDraft,baseRefOid \
+            --jq '"draft=\(.isDraft)\nbase_sha=\(.baseRefOid)"' \
+            >> "$GITHUB_OUTPUT"
         env:
           GH_TOKEN: ${{ github.token }}
 
@@ -84,7 +91,7 @@ jobs:
         if: ${{ steps.pr.outputs.draft != 'true' }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.base.sha || github.sha }}
+          ref: ${{ steps.pr.outputs.base_sha }}
 
       - name: AI PR Review
         if: ${{ steps.pr.outputs.draft != 'true' }}

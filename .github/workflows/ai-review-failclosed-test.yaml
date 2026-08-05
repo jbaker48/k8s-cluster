@@ -1,0 +1,66 @@
+---
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+name: "AI Review Fail-Closed Test"
+
+# Throwaway, standalone proof workflow for REVIEW-03/REVIEW-04's fail-closed
+# behavior (04-03-PLAN.md Task 2). Deliberately targets a fake, unreachable
+# litellm endpoint and a literal fake API key — no secrets: context is
+# referenced anywhere in this file, so it can never reach or authenticate
+# against the real litellm proxy. Not part of normal PR traffic; dispatched
+# manually against a chosen low-stakes PR to prove on_model_failure: notice
+# posts a visible "## AI review could not run" comment instead of silently
+# failing or approving.
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "PR number in jbaker48/k8s-cluster to post the simulated failure notice on"
+        required: true
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    name: AI PR Review (fail-closed test)
+    runs-on: k8s-cluster-ci
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Bootstrap gh CLI and python3 (not preinstalled on this runner image)
+        run: |
+          set -euo pipefail
+          GH_VERSION="2.97.0"
+          curl -fsSL -o /tmp/gh.tar.gz \
+            "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.tar.gz"
+          tar -xzf /tmp/gh.tar.gz -C /tmp
+          sudo install -m 755 "/tmp/gh_${GH_VERSION}_linux_amd64/bin/gh" /usr/local/bin/gh
+
+          PY_TAG="20260728"
+          curl -fsSL -o /tmp/python.tar.gz \
+            "https://github.com/astral-sh/python-build-standalone/releases/download/${PY_TAG}/cpython-3.11.15+${PY_TAG}-x86_64-unknown-linux-gnu-install_only.tar.gz"
+          tar -xzf /tmp/python.tar.gz -C /tmp
+          sudo ln -sf /tmp/python/bin/python3 /usr/local/bin/python3
+          gh --version && python3 --version
+
+      - name: AI PR Review (deliberately-broken endpoint/key)
+        uses: misospace/pr-reviewer-action@6f4fb724b222f6d9a83096d6b41cd636ef3a044e # v2.1.10
+        with:
+          github_token: ${{ github.token }}
+          repo: jbaker48/k8s-cluster
+          pr_number: ${{ inputs.pr_number }}
+          ai_base_url: "https://litellm.invalid.example.test/v1"
+          ai_api_format: openai
+          ai_model: deepseek-v4-flash
+          ai_api_key: "sk-deliberately-invalid-test-key-do-not-use"
+          ai_max_tokens: "16000"
+          on_model_failure: notice
+          tool_mode: "off"
+          publish_review_comment: "true"
+          comment_marker: "<!-- ai-pr-reviewer-failclosed-test -->"

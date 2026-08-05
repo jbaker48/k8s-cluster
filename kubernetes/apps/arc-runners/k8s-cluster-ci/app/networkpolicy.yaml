@@ -54,6 +54,16 @@ spec:
         - matchName: "codeload.github.com"
         - matchPattern: "*.actions.githubusercontent.com"
         - matchName: "objects.githubusercontent.com"
+        # Added after live diagnosis of ai-review.yaml's bootstrap step
+        # (04-01-PLAN.md Task 2): `curl` against
+        # github.com/cli/cli/releases/download/... and
+        # github.com/astral-sh/python-build-standalone/releases/download/...
+        # redirects to this CDN host for the actual asset bytes -
+        # objects.githubusercontent.com does not cover it. Without this,
+        # the download hung for the full --max-time then failed with
+        # "curl: (28) Failed to connect to release-assets.githubusercontent.com
+        # port 443 ... Timeout was reached".
+        - matchName: "release-assets.githubusercontent.com"
         # Narrowed to the observed shard prefix rather than the bare
         # *.blob.core.windows.net suffix, which would permit egress to any
         # Azure Storage account (attacker-controlled ones included) under

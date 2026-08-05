@@ -1,0 +1,114 @@
+---
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+name: "AI Review"
+
+# Automatic pull_request_target trigger deliberately removed (see 04-01-SUMMARY.md
+# deviations): pr-reviewer-action's GitHub-platform comment publish path uses
+# `gh pr comment --edit-last`, which edits the LAST comment posted by the
+# authenticated identity — not a marker-based lookup. This workflow's
+# github_token (the default GITHUB_TOKEN, identity github-actions[bot]) is the
+# SAME identity flux-diff.yaml's mshick/add-pr-comment step uses, so a live run
+# can silently overwrite an unrelated flux-diff comment (confirmed: it happened
+# to PR #1063's helmrelease diff comment during this plan's proof runs).
+# workflow_dispatch-only until a dedicated bot identity (PAT/GitHub App) for
+# this workflow removes the shared-identity collision — then restore
+# pull_request_target with types: [opened, reopened, synchronize, ready_for_review].
+on:
+  workflow_dispatch:
+    inputs:
+      repo:
+        description: "owner/repo to review, defaults to this repo"
+        required: false
+        default: ""
+      pr_number:
+        description: "PR number to review"
+        required: false
+        default: ""
+      force_review:
+        description: "bypass the action's diff-unchanged dedup guard for a forced re-review (workflow_dispatch only)"
+        required: false
+        default: "false"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    name: AI PR Review
+    if: ${{ !github.event.pull_request.draft }}
+    runs-on: k8s-cluster-ci
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Checkout base branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.sha }}
+
+      - name: Bootstrap gh CLI and python3 (not preinstalled on this runner image)
+        run: |
+          set -euo pipefail
+          GH_VERSION="2.97.0"
+          curl -fsSL -o /tmp/gh.tar.gz \
+            "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.tar.gz"
+          tar -xzf /tmp/gh.tar.gz -C /tmp
+          sudo install -m 755 "/tmp/gh_${GH_VERSION}_linux_amd64/bin/gh" /usr/local/bin/gh
+
+          PY_TAG="20260728"
+          curl -fsSL -o /tmp/python.tar.gz \
+            "https://github.com/astral-sh/python-build-standalone/releases/download/${PY_TAG}/cpython-3.11.15+${PY_TAG}-x86_64-unknown-linux-gnu-install_only.tar.gz"
+          tar -xzf /tmp/python.tar.gz -C /tmp
+          sudo ln -sf /tmp/python/bin/python3 /usr/local/bin/python3
+          gh --version && python3 --version
+
+      - name: AI PR Review
+        uses: misospace/pr-reviewer-action@6f4fb724b222f6d9a83096d6b41cd636ef3a044e # v2.1.10
+        with:
+          github_token: ${{ github.token }}
+          repo: ${{ inputs.repo || github.repository }}
+          pr_number: ${{ inputs.pr_number || github.event.pull_request.number }}
+          ai_base_url: "https://litellm.${{ secrets.SECRET_DOMAIN }}/v1"
+          ai_api_format: openai
+          ai_model: deepseek-v4-flash
+          ai_api_key: ${{ secrets.PR_REVIEWER_LITELLM_KEY }}
+          ai_max_tokens: "16000"
+          ai_fallback_model: qwen3-plus
+          ai_fallback_api_key: ${{ secrets.PR_REVIEWER_LITELLM_KEY }}
+          on_model_failure: notice
+          tool_mode: native_loop
+          tool_max_requests: "4"
+          tool_max_rounds: "2"
+          tool_loop_wall_clock_sec: "180"
+          tool_request_timeout_sec: "15"
+          tool_max_response_bytes: "12000"
+          tool_planning_timeout_sec: "60"
+          tool_planning_max_context_bytes: "30000"
+          tool_planning_max_tokens: "8000"
+          tool_allowed_gh_api_repos: "jbaker48/k8s-cluster"
+          tool_enable_for_forks: "false"
+          tool_mcp_servers: "konflate=http://konflate.ai.svc.cluster.local:8080/mcp"
+          standards_file: .claude/CLAUDE.md
+          publish_review_comment: "true"
+          force_review: ${{ inputs.force_review || 'false' }}
+
+      - name: Surface tool harness evidence trail
+        if: always()
+        run: |
+          # The action itself only logs an aggregate count of tool calls
+          # ("N tool call(s) executed in M round(s)") — it never prints
+          # individual tool names to stdout/stderr or the step summary
+          # (confirmed by reading pr_reviewer/tool_loop.py and
+          # scripts/sections/review.sh this session). Per-call detail,
+          # including MCP tool names like mcp__konflate__*, only exists in
+          # tool-harness.md (secret-masked via redact.py's mask_secrets())
+          # in the job workspace. Cat the masked file so REVIEW-02's
+          # evidence-pulling proof (a real mcp__konflate__ invocation) is
+          # visible in this run's log, not just summarized as a count.
+          if [ -f tool-harness.md ]; then
+            cat tool-harness.md
+          else
+            echo "tool-harness.md not found (tool_mode may be off, or the loop degraded before any call)"
+          fi

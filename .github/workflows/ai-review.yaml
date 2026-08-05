@@ -59,14 +59,18 @@ jobs:
         run: |
           set -euo pipefail
           GH_VERSION="2.97.0"
+          GH_SHA256="a2c9b8497e1f85b1ad0dfcb78b5a622e098801b8e461e459e88e1ee12f018112"
           curl -fsSL -o /tmp/gh.tar.gz \
             "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.tar.gz"
+          echo "${GH_SHA256}  /tmp/gh.tar.gz" | sha256sum -c -
           tar -xzf /tmp/gh.tar.gz -C /tmp
           sudo install -m 755 "/tmp/gh_${GH_VERSION}_linux_amd64/bin/gh" /usr/local/bin/gh
 
           PY_TAG="20260728"
+          PY_SHA256="2db18c7bb3a47e32ff41727abd1bb5f158a17d8681931770abf0ba911f5b6580"
           curl -fsSL -o /tmp/python.tar.gz \
             "https://github.com/astral-sh/python-build-standalone/releases/download/${PY_TAG}/cpython-3.11.15+${PY_TAG}-x86_64-unknown-linux-gnu-install_only.tar.gz"
+          echo "${PY_SHA256}  /tmp/python.tar.gz" | sha256sum -c -
           tar -xzf /tmp/python.tar.gz -C /tmp
           sudo ln -sf /tmp/python/bin/python3 /usr/local/bin/python3
           gh --version && python3 --version

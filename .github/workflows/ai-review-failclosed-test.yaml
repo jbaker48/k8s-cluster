@@ -59,6 +59,17 @@ jobs:
           ai_api_format: openai
           ai_model: deepseek-v4-flash
           ai_api_key: "sk-deliberately-invalid-test-key-do-not-use"
+          # ai_fallback_model must be set: action.yml unconditionally derives
+          # AI_FALLBACK_BASE_URL as `inputs.ai_fallback_base_url ||
+          # inputs.ai_base_url`, so it is always non-empty once ai_base_url is
+          # set (required). scripts/sections/config.sh then hard-fails input
+          # validation ("AI_FALLBACK_MODEL is required when AI_FALLBACK_BASE_URL
+          # is set") before the on_model_failure code path is ever reached if
+          # this is left blank. Left unset, ai_fallback_base_url/api_key both
+          # default to the same deliberately-broken primary values above, so
+          # the fallback call also fails against the fake endpoint — no real
+          # litellm proxy or secret is ever touched.
+          ai_fallback_model: deepseek-v4-flash
           ai_max_tokens: "16000"
           on_model_failure: notice
           tool_mode: "off"

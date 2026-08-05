@@ -1,0 +1,82 @@
+---
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+name: "AI Review"
+
+on:
+  pull_request_target:
+    branches: ["main"]
+    types: [opened, reopened, synchronize, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      repo:
+        description: "owner/repo to review, defaults to this repo"
+        required: false
+        default: ""
+      pr_number:
+        description: "PR number to review"
+        required: false
+        default: ""
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    name: AI PR Review
+    if: ${{ !github.event.pull_request.draft }}
+    runs-on: k8s-cluster-ci
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Checkout base branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.sha }}
+
+      - name: Bootstrap gh CLI and python3 (not preinstalled on this runner image)
+        run: |
+          set -euo pipefail
+          GH_VERSION="2.97.0"
+          curl -fsSL -o /tmp/gh.tar.gz \
+            "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.tar.gz"
+          tar -xzf /tmp/gh.tar.gz -C /tmp
+          sudo install -m 755 "/tmp/gh_${GH_VERSION}_linux_amd64/bin/gh" /usr/local/bin/gh
+
+          PY_TAG="20260728"
+          curl -fsSL -o /tmp/python.tar.gz \
+            "https://github.com/astral-sh/python-build-standalone/releases/download/${PY_TAG}/cpython-3.11.15+${PY_TAG}-x86_64-unknown-linux-gnu-install_only.tar.gz"
+          tar -xzf /tmp/python.tar.gz -C /tmp
+          sudo ln -sf /tmp/python/bin/python3 /usr/local/bin/python3
+          gh --version && python3 --version
+
+      - name: AI PR Review
+        uses: misospace/pr-reviewer-action@6f4fb724b222f6d9a83096d6b41cd636ef3a044e # v2.1.10
+        with:
+          github_token: ${{ github.token }}
+          repo: ${{ inputs.repo || github.repository }}
+          pr_number: ${{ inputs.pr_number || github.event.pull_request.number }}
+          ai_base_url: "https://litellm.${{ secrets.SECRET_DOMAIN }}/v1"
+          ai_api_format: openai
+          ai_model: deepseek-v4-flash
+          ai_api_key: ${{ secrets.PR_REVIEWER_LITELLM_KEY }}
+          ai_max_tokens: "16000"
+          ai_fallback_model: qwen3-plus
+          ai_fallback_api_key: ${{ secrets.PR_REVIEWER_LITELLM_KEY }}
+          on_model_failure: notice
+          tool_mode: native_loop
+          tool_max_requests: "4"
+          tool_max_rounds: "2"
+          tool_loop_wall_clock_sec: "180"
+          tool_request_timeout_sec: "15"
+          tool_max_response_bytes: "12000"
+          tool_planning_timeout_sec: "60"
+          tool_planning_max_context_bytes: "30000"
+          tool_planning_max_tokens: "8000"
+          tool_allowed_gh_api_repos: "jbaker48/k8s-cluster"
+          tool_enable_for_forks: "false"
+          tool_mcp_servers: "konflate=http://konflate.ai.svc.cluster.local:8080/mcp"
+          standards_file: .claude/CLAUDE.md
+          publish_review_comment: "true"

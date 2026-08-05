@@ -80,3 +80,22 @@ jobs:
           tool_mcp_servers: "konflate=http://konflate.ai.svc.cluster.local:8080/mcp"
           standards_file: .claude/CLAUDE.md
           publish_review_comment: "true"
+
+      - name: Surface tool harness evidence trail
+        if: always()
+        run: |
+          # The action itself only logs an aggregate count of tool calls
+          # ("N tool call(s) executed in M round(s)") — it never prints
+          # individual tool names to stdout/stderr or the step summary
+          # (confirmed by reading pr_reviewer/tool_loop.py and
+          # scripts/sections/review.sh this session). Per-call detail,
+          # including MCP tool names like mcp__konflate__*, only exists in
+          # tool-harness.md (secret-masked via redact.py's mask_secrets())
+          # in the job workspace. Cat the masked file so REVIEW-02's
+          # evidence-pulling proof (a real mcp__konflate__ invocation) is
+          # visible in this run's log, not just summarized as a count.
+          if [ -f tool-harness.md ]; then
+            cat tool-harness.md
+          else
+            echo "tool-harness.md not found (tool_mode may be off, or the loop degraded before any call)"
+          fi

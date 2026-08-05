@@ -29,8 +29,7 @@ on:
         default: ""
       pr_number:
         description: "PR number to review"
-        required: false
-        default: ""
+        required: true
       force_review:
         description: "bypass the action's diff-unchanged dedup guard for a forced re-review (workflow_dispatch only)"
         required: false
@@ -109,7 +108,7 @@ jobs:
         with:
           github_token: ${{ github.token }}
           repo: ${{ inputs.repo || github.repository }}
-          pr_number: ${{ inputs.pr_number || github.event.pull_request.number }}
+          pr_number: ${{ inputs.pr_number }}
           ai_base_url: "https://litellm.${{ secrets.SECRET_DOMAIN }}/v1"
           ai_api_format: openai
           ai_model: deepseek-v4-flash

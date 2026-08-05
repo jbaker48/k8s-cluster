@@ -71,6 +71,22 @@ jobs:
           # litellm proxy or secret is ever touched.
           ai_fallback_model: deepseek-v4-flash
           ai_max_tokens: "16000"
+          # Fail fast and deterministically: the action's defaults
+          # (ai_primary_retries=8, ai_primary_retry_delay_sec=15 doubling to a
+          # 120s cap, ai_connect_timeout_sec=30) are tuned for a real,
+          # transiently-flaky endpoint and sum to well over 10 minutes of
+          # sleep+connect time across the primary (8 attempts) and fallback (2
+          # attempts, reusing this same delay) tiers against an endpoint that
+          # never succeeds — confirmed by reading scripts/model_call.sh's
+          # retry loop and scripts/sections/config.sh's defaults this session,
+          # after a first dispatch was cancelled at the job's 10-minute
+          # ceiling before ever reaching handle_model_failure. Minimizing
+          # these three inputs collapses total retry/backoff time to a few
+          # seconds while still exercising a genuine failed-attempt →
+          # on_model_failure path.
+          ai_primary_retries: "1"
+          ai_primary_retry_delay_sec: "1"
+          ai_connect_timeout_sec: "5"
           on_model_failure: notice
           tool_mode: "off"
           publish_review_comment: "true"

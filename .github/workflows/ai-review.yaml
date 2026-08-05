@@ -37,7 +37,13 @@ on:
         default: "false"
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.number || github.ref }}
+  # github.event.number is a pull_request-event-only field, always unset
+  # under this workflow's workflow_dispatch-only trigger -- so this always
+  # collapsed to `${{ github.workflow }}-${{ github.ref }}`, meaning two
+  # different PRs dispatched from the same ref would cancel each other's
+  # in-flight review. Key off inputs.pr_number (the actual review target)
+  # first (WR-03 finding).
+  group: ${{ github.workflow }}-${{ inputs.pr_number || github.event.number || github.ref }}
   cancel-in-progress: true
 
 jobs:

@@ -127,7 +127,7 @@ jobs:
           tool_planning_timeout_sec: "60"
           tool_planning_max_context_bytes: "30000"
           tool_planning_max_tokens: "8000"
-          tool_allowed_gh_api_repos: "jbaker48/k8s-cluster"
+          tool_allowed_gh_api_repos: "${{ inputs.repo || github.repository }}"
           tool_enable_for_forks: "false"
           tool_mcp_servers: "konflate=http://konflate.ai.svc.cluster.local:8080/mcp"
           standards_file: .claude/CLAUDE.md

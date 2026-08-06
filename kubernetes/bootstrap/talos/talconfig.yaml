@@ -5,6 +5,7 @@ talosVersion: v1.12.6
 # renovate: datasource=docker depName=ghcr.io/siderolabs/kubelet
 kubernetesVersion: v1.35.3
 
+# gsd-test: 05-05 Test 3 hard-exclusion regression + notify-exclusion throwaway test
 clusterName: &clusterName "home-kubernetes"
 endpoint: https://10.20.0.250:6443
 

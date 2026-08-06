@@ -20,14 +20,39 @@ jobs:
     outputs:
       excluded: ${{ steps.gate.outputs.excluded }}
     steps:
-      - name: Fetch exclusion config from base branch
+      - name: Check for automated-revert bypass marker
+        id: bypass
+        env:
+          # All PR-derived values are routed through env: indirection (never interpolated
+          # raw into the shell body below) — deliberately applied to every value here, not
+          # just the ones strictly required, since PR title/body are attacker-controlled
+          # free text on this pull_request_target trigger (D-04, T-05-15).
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REPO: ${{ github.repository }}
+          HAS_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'automated-revert') }}
+        run: |
+          IS_BYPASS="false"
+          # All three conditions required — branch prefix, label, and non-fork — never the
+          # workflow-run actor field or any default-token identity check (RESEARCH.md
+          # Anti-Patterns; the exact incident class Phase 4's PR #1063 already proved dangerous).
+          if [[ "$HEAD_REF" == auto-revert/* ]] \
+             && [[ "$HAS_LABEL" == "true" ]] \
+             && [[ "$HEAD_REPO" == "$BASE_REPO" ]]; then
+            IS_BYPASS="true"
+          fi
+          echo "is_bypass=$IS_BYPASS" >> "$GITHUB_OUTPUT"
+
+      - if: steps.bypass.outputs.is_bypass != 'true'
+        name: Fetch exclusion config from base branch
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh api "repos/${{ github.repository }}/contents/.github/exclusion-gate.yaml?ref=${{ github.event.pull_request.base.sha }}" \
             --jq '.content' | base64 -d > /tmp/exclusion-gate.yaml
 
-      - name: Build paths-filter map
+      - if: steps.bypass.outputs.is_bypass != 'true'
+        name: Build paths-filter map
         id: build-filters
         run: |
           # Derived generically from exclusion-gate.yaml's top-level keys so a new
@@ -40,13 +65,15 @@ jobs:
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Evaluate path filters
+      - if: steps.bypass.outputs.is_bypass != 'true'
+        name: Evaluate path filters
         id: filter
         uses: dorny/paths-filter@v4
         with:
           filters: ${{ steps.build-filters.outputs.filters }}
 
-      - name: Compute excluded flag and reasons
+      - if: steps.bypass.outputs.is_bypass != 'true'
+        name: Compute excluded flag and reasons
         id: gate
         env:
           FILTER_OUTPUTS: ${{ toJSON(steps.filter.outputs) }}
@@ -70,7 +97,7 @@ jobs:
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
-      - if: steps.gate.outputs.excluded == 'true'
+      - if: steps.bypass.outputs.is_bypass != 'true' && steps.gate.outputs.excluded == 'true'
         name: Comment on excluded PR
         uses: mshick/add-pr-comment@v3
         with:
@@ -81,7 +108,7 @@ jobs:
             ${{ steps.gate.outputs.reasons }}
             This PR is excluded from AI-driven auto-merge regardless of review verdict.
 
-      - if: steps.gate.outputs.excluded == 'true'
+      - if: steps.bypass.outputs.is_bypass != 'true' && steps.gate.outputs.excluded == 'true'
         name: Apply gate label
         env:
           GH_TOKEN: ${{ github.token }}
@@ -89,3 +116,132 @@ jobs:
           gh pr edit "${{ github.event.pull_request.number }}" \
             --repo "${{ github.repository }}" \
             --add-label "gate/human-required"
+
+      - if: steps.bypass.outputs.is_bypass == 'true'
+        name: Comment on bypassed PR
+        uses: mshick/add-pr-comment@v3
+        with:
+          message-id: "exclusion-gate-bypass/${{ github.event.pull_request.number }}"
+          message: |
+            ✅ **Automated health-gate revert recognized** — this PR's branch, label, and
+            origin repo match the health-gate revert-bot's bypass marker (D-04).
+            Exclusion and AI-review evaluation were skipped for this PR.
+
+      - if: steps.bypass.outputs.is_bypass != 'true'
+        name: Fetch circuit-breaker state from base branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/${{ github.repository }}/contents/.github/health-gate/circuit-breaker-state.json?ref=${{ github.event.pull_request.base.sha }}" \
+            --jq '.content' | base64 -d > /tmp/circuit-breaker-state.json
+
+      - if: steps.bypass.outputs.is_bypass != 'true'
+        name: Resolve touched app buckets
+        id: buckets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Read-only PR-files listing (never a checkout/execution of PR-controlled
+          # content) — extracts every unique kubernetes/apps/<namespace>/<app>
+          # two-segment prefix touched by this PR. Zero buckets is a valid outcome.
+          BUCKETS=$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" \
+            --paginate --jq '.[].filename' \
+            | awk -F/ '$1=="kubernetes" && $2=="apps" && NF>=4 {print $3"/"$4}' \
+            | sort -u | jq -R . | jq -sc .)
+          echo "buckets=$BUCKETS" >> "$GITHUB_OUTPUT"
+
+      - if: steps.bypass.outputs.is_bypass != 'true'
+        name: Evaluate circuit-breaker pause state
+        id: circuit-breaker
+        env:
+          BUCKETS: ${{ steps.buckets.outputs.buckets }}
+        run: |
+          PAUSED=false
+          REASONS=""
+          for bucket in $(echo "$BUCKETS" | jq -r '.[]'); do
+            IS_PAUSED=$(jq -r --arg b "$bucket" '.[$b].paused // false' /tmp/circuit-breaker-state.json)
+            if [[ "$IS_PAUSED" == "true" ]]; then
+              PAUSED=true
+              COUNT=$(jq -r --arg b "$bucket" '.[$b].reverts | length' /tmp/circuit-breaker-state.json)
+              REASONS="$REASONS- \`$bucket\`: $COUNT revert(s) recorded, paused pending human re-enable"$'\n'
+            fi
+          done
+          echo "paused=$PAUSED" >> "$GITHUB_OUTPUT"
+          {
+            echo "reasons<<EOF"
+            echo "$REASONS"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - if: steps.bypass.outputs.is_bypass != 'true' && steps.circuit-breaker.outputs.paused == 'true'
+        name: Comment on circuit-breaker-paused PR
+        uses: mshick/add-pr-comment@v3
+        with:
+          message-id: "exclusion-gate-circuit-breaker/${{ github.event.pull_request.number }}"
+          message: |
+            🔌 **Human merge required** — circuit breaker paused for one or more app
+            buckets this PR touches:
+
+            ${{ steps.circuit-breaker.outputs.reasons }}
+            A human must edit `.github/health-gate/circuit-breaker-state.json`'s
+            `paused` field to `false` via a normal PR to re-enable auto-merge for
+            this bucket.
+
+      - if: steps.bypass.outputs.is_bypass != 'true' && steps.circuit-breaker.outputs.paused == 'true'
+        name: Apply gate label for circuit breaker
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh pr edit "${{ github.event.pull_request.number }}" \
+            --repo "${{ github.repository }}" \
+            --add-label "gate/human-required"
+
+  notify-exclusion:
+    name: Notify hard exclusion
+    needs: [exclusion-check]
+    if: needs.exclusion-check.outputs.excluded == 'true'
+    runs-on: k8s-cluster-ci
+    environment: health-gate
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Bootstrap kubectl (SHA256-verified, not preinstalled on this runner image)
+        run: |
+          set -euo pipefail
+          KUBECTL_VERSION="$(curl -fsSL https://dl.k8s.io/release/stable-1.35.txt)"
+          curl -fsSL -o /tmp/kubectl \
+            "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+          curl -fsSL -o /tmp/kubectl.sha256 \
+            "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl.sha256"
+          echo "$(cat /tmp/kubectl.sha256)  /tmp/kubectl" | sha256sum -c -
+          sudo install -m 755 /tmp/kubectl /usr/local/bin/kubectl
+          kubectl version --client
+
+      - name: Write kubeconfig to runner-local temp file (never echoed)
+        run: |
+          set -euo pipefail
+          # secrets.HEALTH_GATE_KUBECONFIG is referenced only via the secrets
+          # context here (GitHub auto-masks it in logs); it is written
+          # straight to a runner-local temp file and never assigned to an
+          # env var that could be echoed or captured elsewhere in this job.
+          KCFG="${RUNNER_TEMP}/health-gate-kubeconfig.yaml"
+          printf '%s' "${{ secrets.HEALTH_GATE_KUBECONFIG }}" > "${KCFG}"
+          chmod 600 "${KCFG}"
+          printf 'KUBECONFIG=%s\n' "${KCFG}" >> "$GITHUB_ENV"
+
+      - name: Emit HardExclusionBlocked event
+        env:
+          # PR number and URL are well-formed, GitHub-generated values — deliberately
+          # excluding PR title/body (attacker-controlled free text on this
+          # pull_request_target trigger) from the event message entirely (T-05-15).
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          set -euo pipefail
+          kubectl create event "hard-exclusion-blocked-${{ github.run_id }}" \
+            --for=kustomizations.kustomize.toolkit.fluxcd.io/cluster-apps \
+            -n flux-system \
+            --reason=HardExclusionBlocked \
+            --type=Warning \
+            --message="PR #${PR_NUMBER} excluded from AI-driven auto-merge: ${PR_URL}"

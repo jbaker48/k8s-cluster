@@ -110,3 +110,12 @@ spec:
         - ports:
             - port: "8080"
               protocol: TCP
+
+    # 5. Kubernetes API server - required for health-gate.yaml's kubectl
+    #    polling of Flux Kustomization/HelmRelease conditions (D-02/HEALTH-01).
+    #    toEntities: kube-apiserver is Cilium's special identity for the
+    #    apiserver - avoids the toServices pitfall already documented in
+    #    rule 3 above (silently dropped traffic on this cluster's Cilium
+    #    version) and avoids guessing the apiserver's ClusterIP/port.
+    - toEntities:
+        - kube-apiserver

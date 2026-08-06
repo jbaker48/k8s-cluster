@@ -8,6 +8,7 @@ resources:
   - ./serviceaccount.yaml
   - ./helmrelease.yaml
   - ./networkpolicy.yaml
+  - ./rbac.yaml
 labels:
   - pairs:
       app.kubernetes.io/name: k8s-cluster-ci

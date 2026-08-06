@@ -1,0 +1,223 @@
+---
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+name: "Health Gate"
+
+# Deliberately NO paths: filter on the push trigger — every merge to main
+# must trigger a full cluster-wide poll, regardless of which files it
+# touched (HEALTH-01's "across the cluster" scope, not "the merged app
+# only"). workflow_dispatch's window_override_seconds input lets later
+# plans deterministically test the inconclusive path without needing a
+# genuinely slow real app.
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+    inputs:
+      window_override_seconds:
+        description: "override the 900s default observation window, seconds — testing only"
+        required: false
+        default: ""
+
+concurrency:
+  # One health-gate run per merge commit — a re-dispatch against the same
+  # SHA cancels the stale one, never runs two polls against the same
+  # commit concurrently.
+  group: ${{ github.workflow }}-${{ github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  health-gate:
+    name: Health Gate
+    # Grants access to secrets.HEALTH_GATE_KUBECONFIG (Plan 05-01). Plan
+    # 05-06 extends this same job with revert logic but deliberately keeps
+    # this ambient default-token permission block unchanged at
+    # contents: read — every git push / PR create/merge that plan adds
+    # authenticates via a separately-exchanged revert-bot App token, never
+    # the ambient GITHUB_TOKEN, so do not add write scopes here now or
+    # later.
+    environment: health-gate
+    runs-on: k8s-cluster-ci
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    steps:
+      - name: Bootstrap gh CLI and kubectl
+        run: |
+          set -euo pipefail
+          GH_VERSION="2.97.0"
+          GH_SHA256="a2c9b8497e1f85b1ad0dfcb78b5a622e098801b8e461e459e88e1ee12f018112"
+          curl -fsSL -o /tmp/gh.tar.gz \
+            "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.tar.gz"
+          echo "${GH_SHA256}  /tmp/gh.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/gh.tar.gz -C /tmp
+          sudo install -m 755 "/tmp/gh_${GH_VERSION}_linux_amd64/bin/gh" /usr/local/bin/gh
+          gh --version
+
+          KUBECTL_VERSION="$(curl -fsSL https://dl.k8s.io/release/stable-1.35.txt)"
+          curl -fsSL -o /tmp/kubectl \
+            "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+          curl -fsSL -o /tmp/kubectl.sha256 \
+            "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl.sha256"
+          echo "$(cat /tmp/kubectl.sha256)  /tmp/kubectl" | sha256sum -c -
+          sudo install -m 755 /tmp/kubectl /usr/local/bin/kubectl
+          kubectl version --client
+
+      - name: Authenticate to Kubernetes API
+        run: |
+          set -euo pipefail
+          # secrets.HEALTH_GATE_KUBECONFIG is referenced only via the
+          # secrets context here (GitHub auto-masks it in logs); it is
+          # written straight to a runner-local temp file and never
+          # assigned to an env var that could be echoed or captured
+          # elsewhere in this job.
+          KCFG="${RUNNER_TEMP}/health-gate-kubeconfig.yaml"
+          printf '%s' "${{ secrets.HEALTH_GATE_KUBECONFIG }}" > "${KCFG}"
+          chmod 600 "${KCFG}"
+          printf 'KUBECONFIG=%s\n' "${KCFG}" >> "$GITHUB_ENV"
+
+      - name: Resolve observation window
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          WINDOW_OVERRIDE: ${{ inputs.window_override_seconds }}
+        run: |
+          set -euo pipefail
+          if [ "${EVENT_NAME}" = "workflow_dispatch" ] && [ -n "${WINDOW_OVERRIDE}" ]; then
+            WINDOW_SECONDS="${WINDOW_OVERRIDE}"
+          else
+            WINDOW_SECONDS=900
+          fi
+          echo "WINDOW_SECONDS=${WINDOW_SECONDS}" >> "$GITHUB_ENV"
+          echo "POLL_INTERVAL_SECONDS=30" >> "$GITHUB_ENV"
+
+      - name: Poll Flux conditions and classify
+        id: poll
+        run: |
+          set -uo pipefail
+          # Deliberately WITHOUT -e: a transient kubectl failure inside the
+          # loop must be tolerated and retried, never abort the script —
+          # the fail-closed guarantee lives in the classification logic
+          # below (an errored iteration can only ever fall through to
+          # "keep polling"/"inconclusive", never "healthy"), not in
+          # aborting on the first error.
+
+          DEADLINE_EPOCH=$(( $(date +%s) + WINDOW_SECONDS ))
+          OUTCOME=""
+          LAST_JSON=""
+          STALLED_OR_FAILED_JSON="[]"
+          NOT_READY_JSON="[]"
+
+          # Single jq pass over the full .items array per iteration — never
+          # a per-item loop with early exit — so a multi-resource Stalled
+          # tick doesn't depend on jq's item ordering.
+          JQ_CLASSIFY='
+            def readyCond: (.status.conditions // []) | map(select(.type=="Ready")) | (.[0] // null);
+            def stalledCond: (.status.conditions // []) | map(select(.type=="Stalled")) | (.[0] // null);
+            def resourceType:
+              if .kind == "Kustomization" then "kustomizations.kustomize.toolkit.fluxcd.io"
+              elif .kind == "HelmRelease" then "helmreleases.helm.toolkit.fluxcd.io"
+              else (.kind | ascii_downcase) + "s"
+              end;
+            def isStalledOrFailed:
+              (readyCond) as $r
+              | (stalledCond) as $s
+              | ($r != null and $r.status == "False" and (
+                  ($s != null and $s.status == "True") or
+                  (($r.reason // "") == "RetriesExceeded")
+                ));
+            {
+              stalled_or_failed: [ .items[]
+                | select(isStalledOrFailed)
+                | {namespace: .metadata.namespace, name: .metadata.name, kind: .kind, resource: resourceType, reason: (readyCond.reason // "unknown")}
+              ],
+              all_ready: ( [ .items[] | (readyCond.status // "") == "True" ] | all )
+            }
+          '
+
+          while [ "$(date +%s)" -lt "${DEADLINE_EPOCH}" ]; do
+            RAW_OUTPUT=$(kubectl get kustomizations.kustomize.toolkit.fluxcd.io,helmreleases.helm.toolkit.fluxcd.io -A -o json 2>/tmp/poll-err.log)
+            KCTL_STATUS=$?
+
+            if [ "${KCTL_STATUS}" -ne 0 ] || ! echo "${RAW_OUTPUT}" | jq -e . >/dev/null 2>&1; then
+              # Fail-closed guarantee: an errored/non-JSON iteration only
+              # ever falls through to "keep polling" — it can never set
+              # OUTCOME, so it can never produce a "healthy" verdict.
+              echo "WARNING: kubectl poll failed or returned non-JSON output (exit=${KCTL_STATUS}); retrying in ${POLL_INTERVAL_SECONDS}s"
+              cat /tmp/poll-err.log 2>/dev/null || true
+              sleep "${POLL_INTERVAL_SECONDS}"
+              continue
+            fi
+
+            LAST_JSON="${RAW_OUTPUT}"
+            RESULT=$(echo "${RAW_OUTPUT}" | jq -c "${JQ_CLASSIFY}")
+            STALLED_COUNT=$(echo "${RESULT}" | jq '.stalled_or_failed | length')
+            ALL_READY=$(echo "${RESULT}" | jq -r '.all_ready')
+
+            if [ "${STALLED_COUNT}" -gt 0 ]; then
+              OUTCOME="unhealthy"
+              STALLED_OR_FAILED_JSON=$(echo "${RESULT}" | jq -c '.stalled_or_failed')
+              break
+            elif [ "${ALL_READY}" = "true" ]; then
+              OUTCOME="healthy"
+              break
+            fi
+
+            sleep "${POLL_INTERVAL_SECONDS}"
+          done
+
+          if [ -z "${OUTCOME}" ]; then
+            OUTCOME="inconclusive"
+            if [ -n "${LAST_JSON}" ]; then
+              NOT_READY_JSON=$(echo "${LAST_JSON}" | jq -c '
+                def readyCond: (.status.conditions // []) | map(select(.type=="Ready")) | (.[0] // null);
+                def resourceType:
+                  if .kind == "Kustomization" then "kustomizations.kustomize.toolkit.fluxcd.io"
+                  elif .kind == "HelmRelease" then "helmreleases.helm.toolkit.fluxcd.io"
+                  else (.kind | ascii_downcase) + "s"
+                  end;
+                [ .items[] | select((readyCond.status // "") != "True") | {namespace: .metadata.namespace, name: .metadata.name, kind: .kind, resource: resourceType} ]
+              ')
+            fi
+          fi
+
+          echo "outcome=${OUTCOME}" >> "$GITHUB_OUTPUT"
+          echo "outcome=${OUTCOME}"
+
+          {
+            echo "stalled_or_failed<<POLLEOF"
+            echo "${STALLED_OR_FAILED_JSON}"
+            echo "POLLEOF"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "not_ready_items<<POLLEOF"
+            echo "${NOT_READY_JSON}"
+            echo "POLLEOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Log unhealthy outcome (revert not yet wired)
+        if: steps.poll.outputs.outcome == 'unhealthy'
+        env:
+          STALLED_OR_FAILED: ${{ steps.poll.outputs.stalled_or_failed }}
+        run: |
+          echo "unhealthy detected — revert not yet wired, see Plan 05-06 (${STALLED_OR_FAILED})"
+
+      - name: Emit inconclusive notification
+        if: steps.poll.outputs.outcome == 'inconclusive'
+        env:
+          NOT_READY_ITEMS: ${{ steps.poll.outputs.not_ready_items }}
+        run: |
+          set -euo pipefail
+          FOR_NS=$(echo "${NOT_READY_ITEMS}" | jq -r '.[0].namespace')
+          FOR_REF=$(echo "${NOT_READY_ITEMS}" | jq -r '.[0] | "\(.resource)/\(.name)"')
+          MESSAGE=$(echo "${NOT_READY_ITEMS}" | jq -r '[.[] | "\(.namespace)/\(.name) (\(.kind))"] | join(", ")')
+
+          # Unique name suffixed by GITHUB_RUN_ID (never static/reused) so a
+          # revert notification and a hard-exclusion notification can fire
+          # independently later without Kubernetes' own same-object
+          # event-aggregation collapsing them.
+          kubectl create event "health-gate-inconclusive-${GITHUB_RUN_ID}" \
+            --namespace="${FOR_NS}" \
+            --for="${FOR_REF}" \
+            --reason="HealthGateInconclusive" \
+            --type="Warning" \
+            --message="Merge ${GITHUB_SHA} to main left the following resources still reconciling after the ${WINDOW_SECONDS}s observation window: ${MESSAGE}. Run: ${GITHUB_RUN_ID}"

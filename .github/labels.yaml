@@ -19,4 +19,4 @@
 # Gate
 - { name: "gate/human-required",     color: "b60205", description: "Excluded from AI auto-merge — human must merge" }
 # Automation
-- { name: "automated-revert",        color: "5319e7", description: "Applied by the health-gate revert-bot to its own self-merged revert PRs — the D-04 bypass marker exclusion-gate.yaml checks for" }
+- { name: "automated-revert",        color: "5319e7", description: "Applied by the health-gate revert-bot to its own self-merged revert PRs (D-04 bypass marker)" }

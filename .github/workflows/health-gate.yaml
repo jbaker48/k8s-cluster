@@ -129,7 +129,7 @@ jobs:
                 | select(isStalledOrFailed)
                 | {namespace: .metadata.namespace, name: .metadata.name, kind: .kind, resource: resourceType, reason: (readyCond.reason // "unknown")}
               ],
-              all_ready: ( [ .items[] | (readyCond.status // "") == "True" ] | all )
+              all_ready: ( (.items | length > 0) and ( [ .items[] | (readyCond.status // "") == "True" ] | all ) )
             }
           '
 

@@ -294,8 +294,17 @@ jobs:
           # prefix touched by this merge, D-06's bucketing granularity. A
           # merge touching zero such paths falls back to the fixed
           # "unscoped" bucket key — the revert action itself is never
-          # gated on bucket resolution succeeding.
-          BUCKETS_JSON=$(git diff --name-only "${BEFORE_SHA}" "${AFTER_SHA}" \
+          # gated on bucket resolution succeeding. BEFORE_SHA is empty on
+          # workflow_dispatch runs (github.event.before only exists for
+          # push events); fall back to AFTER_SHA's own parent commit so
+          # a manually re-dispatched run (e.g. a window_override retry)
+          # still resolves the correct bucket instead of degrading to
+          # unscoped every time.
+          RESOLVED_BEFORE="${BEFORE_SHA}"
+          if [ -z "${RESOLVED_BEFORE}" ]; then
+            RESOLVED_BEFORE=$(git rev-parse "${AFTER_SHA}~1")
+          fi
+          BUCKETS_JSON=$(git diff --name-only "${RESOLVED_BEFORE}" "${AFTER_SHA}" \
             | awk -F/ '$1=="kubernetes" && $2=="apps" && NF>=4 {print $3"/"$4}' \
             | sort -u | jq -R . | jq -sc .)
           if [ "${BUCKETS_JSON}" = "[]" ]; then

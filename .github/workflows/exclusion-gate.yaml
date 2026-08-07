@@ -247,7 +247,12 @@ jobs:
           # the v1/Event manifest and applying it directly is the proven
           # cross-version-safe approach already used in Plan 05-03's
           # synthetic-event tests.
-          kubectl apply -f - <<EOF
+          # kubectl create (not apply) - apply internally performs a get-first
+          # merge-patch check, which the health-gate ServiceAccount's RBAC
+          # deliberately does not grant on events (create-only, least-
+          # privilege per Plan 05-01/D-02) - confirmed live: apply failed
+          # "cannot get resource events" against this exact ServiceAccount.
+          kubectl create -f - <<EOF
           apiVersion: v1
           kind: Event
           metadata:

@@ -69,6 +69,18 @@ spec:
         # Azure Storage account (attacker-controlled ones included) under
         # that shared multi-tenant domain, not just GitHub's own backend.
         - matchPattern: "productionresultssa*.blob.core.windows.net"
+        # dl.k8s.io - the Kubernetes project's own release site, used by
+        # every Phase 5 workflow's kubectl bootstrap step (SHA256-verified
+        # curl download of the kubectl binary + checksum). Not a GitHub
+        # domain, but grouped under this rule since it's the same
+        # allowlist-of-download-sources concern. Confirmed live: resolves
+        # directly to Fastly IPs (151.101.x.x) with no CDN redirect chain,
+        # so no secondary FQDN is needed (unlike release-assets above).
+        # Without this, curl hung for the full 5-minute --max-time then
+        # failed with "curl: (28) Failed to connect to dl.k8s.io port 443
+        # ... Timeout was reached" - discovered live via health-gate.yaml's
+        # first real GitHub Actions run (05-04/05-05 plans).
+        - matchName: "dl.k8s.io"
       toPorts:
         - ports:
             - port: "443"

@@ -208,16 +208,45 @@ jobs:
         run: |
           set -euo pipefail
           FOR_NS=$(echo "${NOT_READY_ITEMS}" | jq -r '.[0].namespace')
-          FOR_REF=$(echo "${NOT_READY_ITEMS}" | jq -r '.[0] | "\(.resource)/\(.name)"')
+          FOR_NAME=$(echo "${NOT_READY_ITEMS}" | jq -r '.[0].name')
+          FOR_KIND=$(echo "${NOT_READY_ITEMS}" | jq -r '.[0].kind')
+          case "${FOR_KIND}" in
+            Kustomization) FOR_API_VERSION="kustomize.toolkit.fluxcd.io/v1" ;;
+            HelmRelease) FOR_API_VERSION="helm.toolkit.fluxcd.io/v2" ;;
+            *) FOR_API_VERSION="v1" ;;
+          esac
           MESSAGE=$(echo "${NOT_READY_ITEMS}" | jq -r '[.[] | "\(.namespace)/\(.name) (\(.kind))"] | join(", ")')
+          NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
+          # `kubectl create event` is not reliably available across kubectl
+          # versions (confirmed live in Plan 05-03: absent entirely on some
+          # builds, present-but-different-flags on others - this exact job
+          # hit "unknown flag: --for" against the dl.k8s.io "stable" 1.35.x
+          # build). Hand-rolling the v1/Event manifest and applying it
+          # directly is the proven cross-version-safe approach already used
+          # in Plan 05-03's synthetic-event tests.
+          #
           # Unique name suffixed by GITHUB_RUN_ID (never static/reused) so a
           # revert notification and a hard-exclusion notification can fire
           # independently later without Kubernetes' own same-object
           # event-aggregation collapsing them.
-          kubectl create event "health-gate-inconclusive-${GITHUB_RUN_ID}" \
-            --namespace="${FOR_NS}" \
-            --for="${FOR_REF}" \
-            --reason="HealthGateInconclusive" \
-            --type="Warning" \
-            --message="Merge ${GITHUB_SHA} to main left the following resources still reconciling after the ${WINDOW_SECONDS}s observation window: ${MESSAGE}. Run: ${GITHUB_RUN_ID}"
+          kubectl apply -f - <<EOF
+apiVersion: v1
+kind: Event
+metadata:
+  name: health-gate-inconclusive-${GITHUB_RUN_ID}
+  namespace: ${FOR_NS}
+involvedObject:
+  apiVersion: ${FOR_API_VERSION}
+  kind: ${FOR_KIND}
+  name: ${FOR_NAME}
+  namespace: ${FOR_NS}
+reason: HealthGateInconclusive
+message: "Merge ${GITHUB_SHA} to main left the following resources still reconciling after the ${WINDOW_SECONDS}s observation window: ${MESSAGE}. Run: ${GITHUB_RUN_ID}"
+type: Warning
+firstTimestamp: "${NOW}"
+lastTimestamp: "${NOW}"
+count: 1
+source:
+  component: health-gate.yaml
+EOF

@@ -239,9 +239,31 @@ jobs:
           PR_URL: ${{ github.event.pull_request.html_url }}
         run: |
           set -euo pipefail
-          kubectl create event "hard-exclusion-blocked-${{ github.run_id }}" \
-            --for=kustomizations.kustomize.toolkit.fluxcd.io/cluster-apps \
-            -n flux-system \
-            --reason=HardExclusionBlocked \
-            --type=Warning \
-            --message="PR #${PR_NUMBER} excluded from AI-driven auto-merge: ${PR_URL}"
+          NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+          # `kubectl create event` is not reliably available across kubectl
+          # versions (confirmed live in Plan 05-03: absent entirely on some
+          # builds, present-but-different-flags on others). Hand-rolling
+          # the v1/Event manifest and applying it directly is the proven
+          # cross-version-safe approach already used in Plan 05-03's
+          # synthetic-event tests.
+          kubectl apply -f - <<EOF
+apiVersion: v1
+kind: Event
+metadata:
+  name: hard-exclusion-blocked-${{ github.run_id }}
+  namespace: flux-system
+involvedObject:
+  apiVersion: kustomize.toolkit.fluxcd.io/v1
+  kind: Kustomization
+  name: cluster-apps
+  namespace: flux-system
+reason: HardExclusionBlocked
+message: "PR #${PR_NUMBER} excluded from AI-driven auto-merge: ${PR_URL}"
+type: Warning
+firstTimestamp: "${NOW}"
+lastTimestamp: "${NOW}"
+count: 1
+source:
+  component: exclusion-gate.yaml
+EOF

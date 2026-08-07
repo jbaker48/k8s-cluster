@@ -248,22 +248,22 @@ jobs:
           # cross-version-safe approach already used in Plan 05-03's
           # synthetic-event tests.
           kubectl apply -f - <<EOF
-apiVersion: v1
-kind: Event
-metadata:
-  name: hard-exclusion-blocked-${{ github.run_id }}
-  namespace: flux-system
-involvedObject:
-  apiVersion: kustomize.toolkit.fluxcd.io/v1
-  kind: Kustomization
-  name: cluster-apps
-  namespace: flux-system
-reason: HardExclusionBlocked
-message: "PR #${PR_NUMBER} excluded from AI-driven auto-merge: ${PR_URL}"
-type: Warning
-firstTimestamp: "${NOW}"
-lastTimestamp: "${NOW}"
-count: 1
-source:
-  component: exclusion-gate.yaml
-EOF
+          apiVersion: v1
+          kind: Event
+          metadata:
+            name: hard-exclusion-blocked-${{ github.run_id }}
+            namespace: flux-system
+          involvedObject:
+            apiVersion: kustomize.toolkit.fluxcd.io/v1
+            kind: Kustomization
+            name: cluster-apps
+            namespace: flux-system
+          reason: HardExclusionBlocked
+          message: "PR #${PR_NUMBER} excluded from AI-driven auto-merge: ${PR_URL}"
+          type: Warning
+          firstTimestamp: "${NOW}"
+          lastTimestamp: "${NOW}"
+          count: 1
+          source:
+            component: exclusion-gate.yaml
+          EOF

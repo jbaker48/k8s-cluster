@@ -231,22 +231,22 @@ jobs:
           # independently later without Kubernetes' own same-object
           # event-aggregation collapsing them.
           kubectl apply -f - <<EOF
-apiVersion: v1
-kind: Event
-metadata:
-  name: health-gate-inconclusive-${GITHUB_RUN_ID}
-  namespace: ${FOR_NS}
-involvedObject:
-  apiVersion: ${FOR_API_VERSION}
-  kind: ${FOR_KIND}
-  name: ${FOR_NAME}
-  namespace: ${FOR_NS}
-reason: HealthGateInconclusive
-message: "Merge ${GITHUB_SHA} to main left the following resources still reconciling after the ${WINDOW_SECONDS}s observation window: ${MESSAGE}. Run: ${GITHUB_RUN_ID}"
-type: Warning
-firstTimestamp: "${NOW}"
-lastTimestamp: "${NOW}"
-count: 1
-source:
-  component: health-gate.yaml
-EOF
+          apiVersion: v1
+          kind: Event
+          metadata:
+            name: health-gate-inconclusive-${GITHUB_RUN_ID}
+            namespace: ${FOR_NS}
+          involvedObject:
+            apiVersion: ${FOR_API_VERSION}
+            kind: ${FOR_KIND}
+            name: ${FOR_NAME}
+            namespace: ${FOR_NS}
+          reason: HealthGateInconclusive
+          message: "Merge ${GITHUB_SHA} to main left the following resources still reconciling after the ${WINDOW_SECONDS}s observation window: ${MESSAGE}. Run: ${GITHUB_RUN_ID}"
+          type: Warning
+          firstTimestamp: "${NOW}"
+          lastTimestamp: "${NOW}"
+          count: 1
+          source:
+            component: health-gate.yaml
+          EOF

@@ -31,14 +31,23 @@ jobs:
           HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
           BASE_REPO: ${{ github.repository }}
           HAS_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'automated-revert') }}
+          PR_AUTHOR_LOGIN: ${{ github.event.pull_request.user.login }}
+          PR_AUTHOR_TYPE: ${{ github.event.pull_request.user.type }}
         run: |
           IS_BYPASS="false"
-          # All three conditions required — branch prefix, label, and non-fork — never the
-          # workflow-run actor field or any default-token identity check (RESEARCH.md
-          # Anti-Patterns; the exact incident class Phase 4's PR #1063 already proved dangerous).
+          # Branch prefix, label, and non-fork are necessary but NOT sufficient — any
+          # collaborator with ordinary push/label rights can forge those three. The
+          # PR_AUTHOR_LOGIN/TYPE check is NOT the github.actor/default-token anti-pattern
+          # RESEARCH.md warns against (that was about the AMBIENT identity running a
+          # workflow, shared across unrelated workflows — the exact PR #1063 incident).
+          # This checks the PR's own author — the revert-bot's dedicated GitHub App
+          # identity (Plan 05-02), distinct and unforgeable by a human collaborator
+          # (GitHub attributes App-authored PRs to a `<slug>[bot]` user with type: Bot).
           if [[ "$HEAD_REF" == auto-revert/* ]] \
              && [[ "$HAS_LABEL" == "true" ]] \
-             && [[ "$HEAD_REPO" == "$BASE_REPO" ]]; then
+             && [[ "$HEAD_REPO" == "$BASE_REPO" ]] \
+             && [[ "$PR_AUTHOR_TYPE" == "Bot" ]] \
+             && [[ "$PR_AUTHOR_LOGIN" == "k8s-cluster-revert-bot[bot]" ]]; then
             IS_BYPASS="true"
           fi
           echo "is_bypass=$IS_BYPASS" >> "$GITHUB_OUTPUT"
@@ -148,6 +157,12 @@ jobs:
             --paginate --jq '.[].filename' \
             | awk -F/ '$1=="kubernetes" && $2=="apps" && NF>=4 {print $3"/"$4}' \
             | sort -u | jq -R . | jq -sc .)
+          # Mirror health-gate.yaml's unscoped fallback: a PR touching zero
+          # kubernetes/apps/ paths must still be checked against the unscoped
+          # bucket, or a paused unscoped circuit-breaker is never enforced.
+          if [ "${BUCKETS}" = "[]" ]; then
+            BUCKETS='["unscoped"]'
+          fi
           echo "buckets=$BUCKETS" >> "$GITHUB_OUTPUT"
 
       - if: steps.bypass.outputs.is_bypass != 'true'

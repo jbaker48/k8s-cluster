@@ -322,10 +322,17 @@ jobs:
           BUCKETS: ${{ steps.bucket.outputs.buckets }}
           STALLED_OR_FAILED: ${{ steps.poll.outputs.stalled_or_failed }}
         run: |
-          # Deliberately WITHOUT -e for the git revert command itself: its
-          # exit code is checked explicitly below so a conflict can be
-          # handled (abort + notify + fail loudly) rather than the script
-          # aborting mid-way through cleanup.
+          # GitHub Actions' default bash step shell already runs with -e
+          # baked into its invocation (bash --noprofile --norc -eo pipefail
+          # {0}) — `set -uo pipefail` here does NOT remove that -e, so a
+          # bare `git revert ...` followed by `REVERT_STATUS=$?` never
+          # reaches the second line on failure; the whole step aborts
+          # immediately, skipping the abort+notify handling below entirely
+          # (found live: run 31170751825, exit 128, zero
+          # HealthGateRevertFailed event emitted). Testing the command as
+          # the direct condition of `if` is exempt from -e's early-exit
+          # behavior in POSIX/bash, which is what actually makes the
+          # explicit exit-code check below reachable.
           set -uo pipefail
           git config user.name "${APP_SLUG}[bot]"
           git config user.email "${APP_SLUG}[bot]@users.noreply.github.com"
@@ -335,8 +342,26 @@ jobs:
           BRANCH="auto-revert/${SLUG}-${GITHUB_RUN_ID}"
 
           git checkout -b "${BRANCH}"
-          git revert --no-edit "${MERGE_SHA}"
-          REVERT_STATUS=$?
+
+          # A merge commit (2+ parents — e.g. any PR merged via a merge
+          # commit, including the revert-bot's own self-merged revert PRs)
+          # cannot be reverted without -m specifying which parent is
+          # mainline; git revert otherwise fails with "commit is a merge
+          # but no -m option was given" (found live: run 31170751825).
+          # -m 1 reverts relative to the first parent, the standard
+          # convention for undoing what a merge introduced into the branch
+          # it was merged into.
+          PARENT_COUNT=$(git cat-file -p "${MERGE_SHA}" | grep -c '^parent ')
+          REVERT_ARGS=(--no-edit)
+          if [ "${PARENT_COUNT}" -gt 1 ]; then
+            REVERT_ARGS+=(-m 1)
+          fi
+
+          if git revert "${REVERT_ARGS[@]}" "${MERGE_SHA}"; then
+            REVERT_STATUS=0
+          else
+            REVERT_STATUS=$?
+          fi
 
           if [ "${REVERT_STATUS}" -ne 0 ]; then
             git revert --abort
@@ -431,6 +456,7 @@ jobs:
           BRANCH: ${{ steps.revert.outputs.branch }}
           BUCKETS: ${{ steps.bucket.outputs.buckets }}
           MERGE_SHA: ${{ github.sha }}
+          STALLED_OR_FAILED: ${{ steps.poll.outputs.stalled_or_failed }}
         run: |
           set -euo pipefail
           BUCKET_LIST=$(echo "${BUCKETS}" | jq -r 'join(", ")')
@@ -459,7 +485,40 @@ jobs:
             echo "First merge attempt failed (likely a conflict against main from a concurrent revert) — retrying exactly once"
 
             git fetch origin main
-            git rebase origin/main "${BRANCH}"
+
+            # Unlike gh pr merge above, a bare `git rebase` here would abort
+            # this whole step silently on conflict (set -euo pipefail IS
+            # active for this step) with no operator-facing signal — the
+            # same class of gap found live in the "git revert, or abort"
+            # step (run 31170751825). Handle it explicitly instead.
+            if ! git rebase origin/main "${BRANCH}"; then
+              git rebase --abort
+
+              FOR_NS=$(echo "${STALLED_OR_FAILED}" | jq -r '.[0].namespace' 2>/dev/null || echo "default")
+              NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+              kubectl create -f - <<EOF
+          apiVersion: v1
+          kind: Event
+          metadata:
+            name: health-gate-revert-rebase-failed-${GITHUB_RUN_ID}
+            namespace: ${FOR_NS}
+          involvedObject:
+            apiVersion: v1
+            kind: Namespace
+            name: ${FOR_NS}
+            namespace: ${FOR_NS}
+          reason: HealthGateRevertFailed
+          message: "Retry-once rebase of ${BRANCH} onto origin/main failed with a conflict after the first PR-merge attempt failed; rebase was aborted and no revert PR was merged. Run: ${GITHUB_RUN_ID}"
+          type: Warning
+          firstTimestamp: "${NOW}"
+          lastTimestamp: "${NOW}"
+          count: 1
+          source:
+            component: health-gate.yaml
+          EOF
+
+              exit 1
+            fi
 
             # Recompute the state-update commit against main's NEW
             # current copy of circuit-breaker-state.json (not the stale

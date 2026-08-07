@@ -1,5 +1,8 @@
 ---
 # yaml-language-server: $schema=https://raw.githubusercontent.com/bjw-s/helm-charts/main/charts/other/app-template/schemas/helmrelease-helm-v2.schema.json
+# GSD Phase 5 Plan 05-07 Task 3: trivial comment-only edit, throwaway PR to
+# prove circuit-breaker is genuinely unblocked after human re-enable. Not
+# merged.
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:

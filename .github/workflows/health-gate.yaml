@@ -194,13 +194,6 @@ jobs:
             echo "POLLEOF"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Log unhealthy outcome (revert not yet wired)
-        if: steps.poll.outputs.outcome == 'unhealthy'
-        env:
-          STALLED_OR_FAILED: ${{ steps.poll.outputs.stalled_or_failed }}
-        run: |
-          echo "unhealthy detected — revert not yet wired, see Plan 05-06 (${STALLED_OR_FAILED})"
-
       - name: Emit inconclusive notification
         if: steps.poll.outputs.outcome == 'inconclusive'
         env:
@@ -248,6 +241,278 @@ jobs:
             namespace: ${FOR_NS}
           reason: HealthGateInconclusive
           message: "Merge ${GITHUB_SHA} to main left the following resources still reconciling after the ${WINDOW_SECONDS}s observation window: ${MESSAGE}. Run: ${GITHUB_RUN_ID}"
+          type: Warning
+          firstTimestamp: "${NOW}"
+          lastTimestamp: "${NOW}"
+          count: 1
+          source:
+            component: health-gate.yaml
+          EOF
+
+      # ---------------------------------------------------------------
+      # Unhealthy branch (Plan 05-06): App-token exchange, bucket
+      # resolution, git revert (with conflict handling), circuit-breaker
+      # state write, revert-PR self-merge, revert notification. Every
+      # step below is gated to outcome == 'unhealthy'. The ambient
+      # default GITHUB_TOKEN stays contents:read throughout (see the
+      # job-level permissions comment above) — every git push / PR
+      # create / PR merge operation below authenticates exclusively via
+      # the separately-exchanged revert-bot App token in
+      # steps.app-token.outputs.token, never the default token.
+      # ---------------------------------------------------------------
+
+      - name: Exchange revert-bot App token
+        id: app-token
+        if: steps.poll.outputs.outcome == 'unhealthy'
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          app-id: ${{ secrets.REVERT_BOT_APP_ID }}
+          private-key: ${{ secrets.REVERT_BOT_APP_PRIVATE_KEY }}
+
+      - name: Checkout main at merge commit
+        if: steps.poll.outputs.outcome == 'unhealthy'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          # Full history: git revert needs the target commit's parent, and
+          # the bucket-resolution diff below needs github.event.before.
+          fetch-depth: 0
+          # This checkout's own git remote config already authenticates as
+          # the App for every push later in this job — no separate
+          # credential wiring needed downstream.
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Resolve merge bucket(s)
+        id: bucket
+        if: steps.poll.outputs.outcome == 'unhealthy'
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          # Every unique two-segment kubernetes/apps/<namespace>/<app>
+          # prefix touched by this merge, D-06's bucketing granularity. A
+          # merge touching zero such paths falls back to the fixed
+          # "unscoped" bucket key — the revert action itself is never
+          # gated on bucket resolution succeeding.
+          BUCKETS_JSON=$(git diff --name-only "${BEFORE_SHA}" "${AFTER_SHA}" \
+            | awk -F/ '$1=="kubernetes" && $2=="apps" && NF>=4 {print $3"/"$4}' \
+            | sort -u | jq -R . | jq -sc .)
+          if [ "${BUCKETS_JSON}" = "[]" ]; then
+            BUCKETS_JSON='["unscoped"]'
+          fi
+          echo "buckets=${BUCKETS_JSON}" >> "$GITHUB_OUTPUT"
+          echo "resolved buckets: ${BUCKETS_JSON}"
+
+      - name: git revert, or abort and notify on conflict
+        id: revert
+        if: steps.poll.outputs.outcome == 'unhealthy'
+        env:
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+          MERGE_SHA: ${{ github.sha }}
+          BUCKETS: ${{ steps.bucket.outputs.buckets }}
+          STALLED_OR_FAILED: ${{ steps.poll.outputs.stalled_or_failed }}
+        run: |
+          # Deliberately WITHOUT -e for the git revert command itself: its
+          # exit code is checked explicitly below so a conflict can be
+          # handled (abort + notify + fail loudly) rather than the script
+          # aborting mid-way through cleanup.
+          set -uo pipefail
+          git config user.name "${APP_SLUG}[bot]"
+          git config user.email "${APP_SLUG}[bot]@users.noreply.github.com"
+
+          FIRST_BUCKET=$(echo "${BUCKETS}" | jq -r '.[0]')
+          SLUG=$(echo "${FIRST_BUCKET}" | tr '/' '-')
+          BRANCH="auto-revert/${SLUG}-${GITHUB_RUN_ID}"
+
+          git checkout -b "${BRANCH}"
+          git revert --no-edit "${MERGE_SHA}"
+          REVERT_STATUS=$?
+
+          if [ "${REVERT_STATUS}" -ne 0 ]; then
+            git revert --abort
+
+            FOR_NS=$(echo "${STALLED_OR_FAILED}" | jq -r '.[0].namespace')
+            FOR_NAME=$(echo "${STALLED_OR_FAILED}" | jq -r '.[0].name')
+            FOR_KIND=$(echo "${STALLED_OR_FAILED}" | jq -r '.[0].kind')
+            case "${FOR_KIND}" in
+              Kustomization) FOR_API_VERSION="kustomize.toolkit.fluxcd.io/v1" ;;
+              HelmRelease) FOR_API_VERSION="helm.toolkit.fluxcd.io/v2" ;;
+              *) FOR_API_VERSION="v1" ;;
+            esac
+            NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+            # Hand-rolled Event manifest + kubectl create -f -, matching
+            # this job's own already-proven inconclusive-notification
+            # pattern above (kubectl create event is not reliably
+            # available across kubectl versions on this runner).
+            kubectl create -f - <<EOF
+          apiVersion: v1
+          kind: Event
+          metadata:
+            name: health-gate-revert-failed-${GITHUB_RUN_ID}
+            namespace: ${FOR_NS}
+          involvedObject:
+            apiVersion: ${FOR_API_VERSION}
+            kind: ${FOR_KIND}
+            name: ${FOR_NAME}
+            namespace: ${FOR_NS}
+          reason: HealthGateRevertFailed
+          message: "git revert of ${MERGE_SHA} failed with a conflict against main; git revert --abort was run and no revert PR was created. Run: ${GITHUB_RUN_ID}"
+          type: Warning
+          firstTimestamp: "${NOW}"
+          lastTimestamp: "${NOW}"
+          count: 1
+          source:
+            component: health-gate.yaml
+          EOF
+
+            exit 1
+          fi
+
+          echo "branch=${BRANCH}" >> "$GITHUB_OUTPUT"
+
+      - name: Update circuit-breaker state
+        if: steps.poll.outputs.outcome == 'unhealthy'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          BUCKETS: ${{ steps.bucket.outputs.buckets }}
+        run: |
+          set -euo pipefail
+          # Circuit-breaker threshold locked by 05-06-PLAN.md Task 1's
+          # human decision (resume-signal: n3-24h) — N=3 reverts to the
+          # SAME bucket within a rolling 24-hour window pauses auto-merge
+          # for that bucket. The Nth revert itself sets paused:true in
+          # this SAME update, never deferred to an (N+1)th revert.
+          WINDOW_SECONDS=86400
+          THRESHOLD=3
+          NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+          # Re-fetched fresh from main here (not reused from the earlier
+          # checkout) to minimize the staleness window for the
+          # concurrent-run race case (RESEARCH.md Pitfall 3).
+          gh api "repos/${{ github.repository }}/contents/.github/health-gate/circuit-breaker-state.json?ref=main" \
+            --jq '.content' | base64 -d > /tmp/circuit-breaker-state.json
+
+          for bucket in $(echo "${BUCKETS}" | jq -r '.[]'); do
+            jq --arg b "$bucket" --arg ts "$NOW" --argjson window "${WINDOW_SECONDS}" --argjson threshold "${THRESHOLD}" '
+              ($ts | fromdateiso8601) as $now_epoch
+              | .[$b] //= {reverts: [], paused: false}
+              | .[$b].reverts += [$ts]
+              | (.[$b].reverts | map(select(($now_epoch - (. | fromdateiso8601)) <= $window)) | length) as $recent_count
+              | .[$b].paused = ($recent_count >= $threshold)
+            ' /tmp/circuit-breaker-state.json > /tmp/circuit-breaker-state.json.new
+            mv /tmp/circuit-breaker-state.json.new /tmp/circuit-breaker-state.json
+          done
+
+          cp /tmp/circuit-breaker-state.json .github/health-gate/circuit-breaker-state.json
+          BUCKET_LIST=$(echo "${BUCKETS}" | jq -r 'join(", ")')
+
+          # Kept as a distinct commit from the git-revert commit itself,
+          # so the revert commit's own provenance stays a clean,
+          # unmodified `git revert`.
+          git add .github/health-gate/circuit-breaker-state.json
+          git commit -m "chore: update circuit-breaker state for ${BUCKET_LIST}"
+
+      - name: Push, create, and merge the revert PR
+        id: revert-pr
+        if: steps.poll.outputs.outcome == 'unhealthy'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          BRANCH: ${{ steps.revert.outputs.branch }}
+          BUCKETS: ${{ steps.bucket.outputs.buckets }}
+          MERGE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          BUCKET_LIST=$(echo "${BUCKETS}" | jq -r 'join(", ")')
+          RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+          # D-03 (locked): the revert lands as an auto-merged revert PR,
+          # not a direct push to main — a visible PR trail for every
+          # revert, reusing PR-merge machinery instead of a separate
+          # direct-push credential path.
+          git push origin "${BRANCH}"
+
+          PR_URL=$(gh pr create \
+            --title "Auto-revert: ${BUCKET_LIST} unhealthy after ${MERGE_SHA:0:7}" \
+            --body "Health-gate detected Stalled/Failed conditions within the observation window after merging ${MERGE_SHA}. Bucket(s): ${BUCKET_LIST}. Run: ${RUN_URL}" \
+            --label automated-revert \
+            --head "${BRANCH}")
+          echo "pr_url=${PR_URL}" >> "$GITHUB_OUTPUT"
+
+          # No --auto: this repo has no branch protection or required
+          # status checks (RESEARCH.md, live-verified), so an immediate
+          # merge is correct.
+          MERGE_STATUS=0
+          gh pr merge --merge --delete-branch "${PR_URL}" || MERGE_STATUS=$?
+
+          if [ "${MERGE_STATUS}" -ne 0 ]; then
+            echo "First merge attempt failed (likely a conflict against main from a concurrent revert) — retrying exactly once"
+
+            git fetch origin main
+            git rebase origin/main "${BRANCH}"
+
+            # Recompute the state-update commit against main's NEW
+            # current copy of circuit-breaker-state.json (not the stale
+            # copy this branch was originally built from).
+            gh api "repos/${{ github.repository }}/contents/.github/health-gate/circuit-breaker-state.json?ref=main" \
+              --jq '.content' | base64 -d > /tmp/circuit-breaker-state.json
+            NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+            for bucket in $(echo "${BUCKETS}" | jq -r '.[]'); do
+              jq --arg b "$bucket" --arg ts "$NOW" --argjson window 86400 --argjson threshold 3 '
+                ($ts | fromdateiso8601) as $now_epoch
+                | .[$b] //= {reverts: [], paused: false}
+                | .[$b].reverts += [$ts]
+                | (.[$b].reverts | map(select(($now_epoch - (. | fromdateiso8601)) <= $window)) | length) as $recent_count
+                | .[$b].paused = ($recent_count >= $threshold)
+              ' /tmp/circuit-breaker-state.json > /tmp/circuit-breaker-state.json.new
+              mv /tmp/circuit-breaker-state.json.new /tmp/circuit-breaker-state.json
+            done
+            cp /tmp/circuit-breaker-state.json .github/health-gate/circuit-breaker-state.json
+            git add .github/health-gate/circuit-breaker-state.json
+            git commit --amend --no-edit
+
+            # Force-push is scoped to this bot's own disposable
+            # auto-revert/* branch only, never main itself — this is the
+            # bot's own throwaway branch, not a history rewrite of main,
+            # so it does not violate HEALTH-03's forward-only constraint.
+            git push --force-with-lease origin "${BRANCH}"
+            gh pr merge --merge --delete-branch "${PR_URL}"
+          fi
+
+      - name: Emit revert notification
+        if: steps.poll.outputs.outcome == 'unhealthy'
+        env:
+          STALLED_OR_FAILED: ${{ steps.poll.outputs.stalled_or_failed }}
+          BUCKETS: ${{ steps.bucket.outputs.buckets }}
+          PR_URL: ${{ steps.revert-pr.outputs.pr_url }}
+          MERGE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          FOR_NS=$(echo "${STALLED_OR_FAILED}" | jq -r '.[0].namespace')
+          FOR_NAME=$(echo "${STALLED_OR_FAILED}" | jq -r '.[0].name')
+          FOR_KIND=$(echo "${STALLED_OR_FAILED}" | jq -r '.[0].kind')
+          case "${FOR_KIND}" in
+            Kustomization) FOR_API_VERSION="kustomize.toolkit.fluxcd.io/v1" ;;
+            HelmRelease) FOR_API_VERSION="helm.toolkit.fluxcd.io/v2" ;;
+            *) FOR_API_VERSION="v1" ;;
+          esac
+          BUCKET_LIST=$(echo "${BUCKETS}" | jq -r 'join(", ")')
+          NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+          kubectl create -f - <<EOF
+          apiVersion: v1
+          kind: Event
+          metadata:
+            name: health-gate-revert-${GITHUB_RUN_ID}
+            namespace: ${FOR_NS}
+          involvedObject:
+            apiVersion: ${FOR_API_VERSION}
+            kind: ${FOR_KIND}
+            name: ${FOR_NAME}
+            namespace: ${FOR_NS}
+          reason: HealthGateAutoRevert
+          message: "Merge ${MERGE_SHA} to main reverted after ${BUCKET_LIST} reported Stalled/Failed within the observation window. Revert PR: ${PR_URL}"
           type: Warning
           firstTimestamp: "${NOW}"
           lastTimestamp: "${NOW}"

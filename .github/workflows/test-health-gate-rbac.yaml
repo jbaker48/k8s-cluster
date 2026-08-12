@@ -71,3 +71,133 @@ jobs:
             echo "$OUTPUT"
             exit 1
           fi
+
+      # Live regression harness for 05-REVIEW.md CR-01 (fixed in 2477e4b5): the
+      # health-gate classifier must never report all_ready=true for a genuinely
+      # empty Flux resource list. Before 2477e4b5 it did, so a cluster the gate
+      # could see nothing at all in was declared healthy on zero evidence.
+      #
+      # Why this is a VALID live proof of CR-01, and exactly what differs from
+      # production: this step makes a real Kubernetes API call through the real
+      # health-gate ServiceAccount RBAC, receives a real HTTP 200 response whose
+      # .items array is genuinely empty, and feeds it through the real production
+      # classifier expression. The ONLY delta from health-gate.yaml's production
+      # poll is the query scope - `-n kube-public` here versus `-A` there.
+      # Production's cluster-wide `-A` query cannot be forced to return an empty
+      # list without breaking the cluster, which is precisely why CR-01 survived
+      # review-by-inspection and needed this seam instead.
+      #
+      # Zero production impact: read-only verbs only, against a namespace that
+      # holds no Flux resources.
+      - name: CR-01 regression assertion - genuinely empty Flux list must never classify as healthy
+        run: |
+          # Deliberately `set -uo pipefail` and NOT -e: this step must reach its
+          # own explicit exit-code checks below. GitHub Actions already invokes
+          # the step shell as `bash --noprofile --norc -eo pipefail {0}`, so -e
+          # is inherited here regardless of what this line says - the same
+          # -e-inheritance trap documented live in health-gate.yaml lines 325-335
+          # (run 31170751825). Every command whose exit code is inspected
+          # therefore uses the `if CMD; then ...; else STATUS=$?; fi` form, which
+          # is exempt from -e's early-exit behaviour.
+          set -uo pipefail
+
+          # kube-public is the empty seam: verified live 2026-08-12 to return
+          # exit 0 with `items: []` - a genuine empty success response, not an
+          # error response that merely looks empty.
+          KCTL_STATUS=0
+          if RAW_OUTPUT=$(kubectl get kustomizations.kustomize.toolkit.fluxcd.io,helmreleases.helm.toolkit.fluxcd.io -n kube-public -o json 2>/tmp/cr01-err.log); then
+            KCTL_STATUS=0
+          else
+            KCTL_STATUS=$?
+          fi
+
+          # PREMISE CHECKS. The CR-01 assertion is only meaningful if the
+          # response really is a successful, well-formed, empty list. Each
+          # failure below is deliberately worded as a PREMISE failure, distinct
+          # from the CR-01 failure banner, so a broken harness is never
+          # misreported as a broken health-gate (or vice versa).
+          if [ "${KCTL_STATUS}" -ne 0 ]; then
+            echo "PREMISE FAILURE (this is NOT a CR-01 verdict): kubectl query exited ${KCTL_STATUS}."
+            echo "No response was obtained to classify, so CR-01 was neither proven nor disproven."
+            cat /tmp/cr01-err.log 2>/dev/null || true
+            exit 1
+          fi
+
+          if ! echo "${RAW_OUTPUT}" | jq -e . >/dev/null 2>&1; then
+            echo "PREMISE FAILURE (this is NOT a CR-01 verdict): kubectl returned output that is not valid JSON."
+            cat /tmp/cr01-err.log 2>/dev/null || true
+            exit 1
+          fi
+
+          ITEM_COUNT=$(echo "${RAW_OUTPUT}" | jq '.items | length')
+          if [ "${ITEM_COUNT}" -ne 0 ]; then
+            echo "PREMISE FAILURE (this is NOT a CR-01 verdict): namespace kube-public now holds ${ITEM_COUNT} Flux resource(s)."
+            echo "This harness requires a genuinely empty (HTTP 200, items: []) response. Re-point it at an"
+            echo "empty namespace - it must never silently pass on a non-empty list."
+            exit 1
+          fi
+
+          # VERBATIM copy of health-gate.yaml's production classifier (its
+          # "Poll Flux conditions and classify" step). It MUST be kept
+          # byte-for-byte in sync: this harness's whole value is that it
+          # evaluates the exact expression production runs, so a paraphrased,
+          # reformatted, re-indented or "improved" copy would validate logic
+          # production never executes. The plan's verify gate diffs the two
+          # blocks byte-for-byte and fails on any divergence.
+          JQ_CLASSIFY='
+            def readyCond: (.status.conditions // []) | map(select(.type=="Ready")) | (.[0] // null);
+            def stalledCond: (.status.conditions // []) | map(select(.type=="Stalled")) | (.[0] // null);
+            def resourceType:
+              if .kind == "Kustomization" then "kustomizations.kustomize.toolkit.fluxcd.io"
+              elif .kind == "HelmRelease" then "helmreleases.helm.toolkit.fluxcd.io"
+              else (.kind | ascii_downcase) + "s"
+              end;
+            def isStalledOrFailed:
+              (readyCond) as $r
+              | (stalledCond) as $s
+              | ($r != null and $r.status == "False" and (
+                  ($s != null and $s.status == "True") or
+                  (($r.reason // "") == "RetriesExceeded")
+                ));
+            {
+              stalled_or_failed: [ .items[]
+                | select(isStalledOrFailed)
+                | {namespace: .metadata.namespace, name: .metadata.name, kind: .kind, resource: resourceType, reason: (readyCond.reason // "unknown")}
+              ],
+              all_ready: ( (.items | length > 0) and ( [ .items[] | (readyCond.status // "") == "True" ] | all ) )
+            }
+          '
+
+          RESULT=$(echo "${RAW_OUTPUT}" | jq -c "${JQ_CLASSIFY}")
+          ALL_READY=$(echo "${RESULT}" | jq -r '.all_ready')
+          STALLED_COUNT=$(echo "${RESULT}" | jq '.stalled_or_failed | length')
+
+          if [ "${ALL_READY}" = "true" ]; then
+            echo "=================================================================="
+            echo "HARD FAILURE: CR-01 REGRESSION DETECTED"
+            echo "=================================================================="
+            echo "A genuinely empty Flux resource list (HTTP 200, items: []) was"
+            echo "classified as all_ready=true. This is exactly the pre-2477e4b5"
+            echo "behaviour CR-01 reported: the health-gate declares a cluster"
+            echo "healthy purely because it saw nothing at all, and auto-merge then"
+            echo "proceeds on a verdict backed by zero evidence."
+            echo "Classifier result: ${RESULT}"
+            echo "=================================================================="
+            exit 1
+          fi
+
+          if [ "${ALL_READY}" != "false" ]; then
+            echo "HARD FAILURE: classifier returned an unexpected all_ready value '${ALL_READY}' - expected exactly false."
+            echo "Classifier result: ${RESULT}"
+            exit 1
+          fi
+
+          if [ "${STALLED_COUNT}" -ne 0 ]; then
+            echo "HARD FAILURE: classifier reported ${STALLED_COUNT} stalled/failed entry(ies) from an empty item list."
+            echo "An empty list cannot produce stalled entries - the classifier is misbehaving."
+            echo "Classifier result: ${RESULT}"
+            exit 1
+          fi
+
+          echo "PASS: CR-01 holds - a genuinely empty Flux list classified as all_ready=false with zero stalled/failed entries."
+          echo "Classifier result: ${RESULT}"

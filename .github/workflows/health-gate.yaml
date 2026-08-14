@@ -243,15 +243,47 @@ jobs:
           NOT_READY_ITEMS: ${{ steps.poll.outputs.not_ready_items }}
         run: |
           set -euo pipefail
-          FOR_NS=$(echo "${NOT_READY_ITEMS}" | jq -r '.[0].namespace')
-          FOR_NAME=$(echo "${NOT_READY_ITEMS}" | jq -r '.[0].name')
-          FOR_KIND=$(echo "${NOT_READY_ITEMS}" | jq -r '.[0].kind')
+          # An EMPTY not-ready list is reachable and must be handled first.
+          # Two ways to get here: every poll in the window failed, so there is
+          # no Flux data at all (the run 31778908203 case, which only became
+          # reachable once the poll step stopped dying outright); or the poll
+          # legitimately saw zero Flux resources, which CR-01's empty-list
+          # guard correctly refuses to call healthy. In both cases jq '.[0].x'
+          # over an empty array returns the STRING "null" with exit 0 — so
+          # this step used to
+          # build a manifest naming namespace "null", kubectl create failed,
+          # the step died, and every notification was skipped. That would have
+          # relocated G-05-2's silence here rather than removing it.
+          if ! ITEM_COUNT=$(echo "${NOT_READY_ITEMS}" | jq 'length' 2>/dev/null); then
+            ITEM_COUNT=0
+          fi
+
+          if [ "${ITEM_COUNT}" -eq 0 ]; then
+            # Target a well-known object guaranteed to exist and already
+            # proven writable by this same ServiceAccount — the identical
+            # flux-system/cluster-apps target exclusion-gate.yaml's own
+            # HardExclusionBlocked event uses. It depends on no poll data,
+            # which is precisely what is missing on this path.
+            FOR_NS="flux-system"
+            FOR_NAME="cluster-apps"
+            FOR_KIND="Kustomization"
+            # Deliberately NOT the "still reconciling" wording used below: on
+            # this path the gate has no idea whether anything is reconciling.
+            # Saying so would be a lie, and a reassuring one.
+            DETAIL="no Flux resource data could be retrieved during the ${WINDOW_SECONDS}s observation window, so cluster health was never evaluated and this merge is UNWATCHED. See the poll step's WARNING output for the underlying kubectl/API failure."
+          else
+            FOR_NS=$(echo "${NOT_READY_ITEMS}" | jq -r '.[0].namespace')
+            FOR_NAME=$(echo "${NOT_READY_ITEMS}" | jq -r '.[0].name')
+            FOR_KIND=$(echo "${NOT_READY_ITEMS}" | jq -r '.[0].kind')
+            MESSAGE=$(echo "${NOT_READY_ITEMS}" | jq -r '[.[] | "\(.namespace)/\(.name) (\(.kind))"] | join(", ")')
+            DETAIL="left the following resources still reconciling after the ${WINDOW_SECONDS}s observation window: ${MESSAGE}."
+          fi
+
           case "${FOR_KIND}" in
             Kustomization) FOR_API_VERSION="kustomize.toolkit.fluxcd.io/v1" ;;
             HelmRelease) FOR_API_VERSION="helm.toolkit.fluxcd.io/v2" ;;
             *) FOR_API_VERSION="v1" ;;
           esac
-          MESSAGE=$(echo "${NOT_READY_ITEMS}" | jq -r '[.[] | "\(.namespace)/\(.name) (\(.kind))"] | join(", ")')
           NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
           # `kubectl create event` is not reliably available across kubectl
@@ -283,7 +315,7 @@ jobs:
             name: ${FOR_NAME}
             namespace: ${FOR_NS}
           reason: HealthGateInconclusive
-          message: "Merge ${GITHUB_SHA} to main left the following resources still reconciling after the ${WINDOW_SECONDS}s observation window: ${MESSAGE}. Run: ${GITHUB_RUN_ID}"
+          message: "Merge ${GITHUB_SHA} to main ${DETAIL} Run: ${GITHUB_RUN_ID}"
           type: Warning
           firstTimestamp: "${NOW}"
           lastTimestamp: "${NOW}"
@@ -394,7 +426,13 @@ jobs:
           # -m 1 reverts relative to the first parent, the standard
           # convention for undoing what a merge introduced into the branch
           # it was merged into.
-          PARENT_COUNT=$(git cat-file -p "${MERGE_SHA}" | grep -c '^parent ')
+          # `|| true` is load-bearing: grep -c EXITS 1 when it counts zero
+          # matches, and `pipefail` is set, so a parentless commit (only the
+          # repo's root commit, hence barely reachable — but the failure mode
+          # is the silent one this whole change is about) would abort the step
+          # here and skip the revert plus every notification below it. grep -c
+          # still prints "0" on that path, so PARENT_COUNT stays correct.
+          PARENT_COUNT=$(git cat-file -p "${MERGE_SHA}" | grep -c '^parent ' || true)
           REVERT_ARGS=(--no-edit)
           if [ "${PARENT_COUNT}" -gt 1 ]; then
             REVERT_ARGS+=(-m 1)
@@ -537,7 +575,11 @@ jobs:
             if ! git rebase origin/main "${BRANCH}"; then
               git rebase --abort
 
-              FOR_NS=$(echo "${STALLED_OR_FAILED}" | jq -r '.[0].namespace' 2>/dev/null || echo "default")
+              # The default has to live INSIDE the jq program. jq returns the
+              # string "null" with exit 0 for `.[0].namespace` over an empty
+              # array, so the `2>/dev/null || echo "default"` this replaces
+              # could never fire and would have named a namespace of "null".
+              FOR_NS=$(echo "${STALLED_OR_FAILED}" | jq -r '(.[0].namespace // "default")')
               NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
               kubectl create -f - <<EOF
           apiVersion: v1

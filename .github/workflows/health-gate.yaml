@@ -673,3 +673,94 @@ jobs:
           source:
             component: health-gate.yaml
           EOF
+
+      # Backstop. Every OTHER conditional step in this job carries an `if:`
+      # with no status-check function, and GitHub implicitly ANDs those with
+      # success() — so any step that dies skips every notification below it
+      # and the run ends in total silence (run 31778908203, gap G-05-2). The
+      # steps above make the poll and notification paths survivable, but
+      # several sites deliberately still fail loudly because a loud failure
+      # is the correct behavior there: the App-token exchange, the checkout,
+      # bucket resolution, the circuit-breaker fetch/commit, and the
+      # push/create/merge. This step is the floor under all of them.
+      - name: Backstop - guarantee an operator-facing signal on failure
+        # `failure()` IS a status-check function, so GitHub does not AND this
+        # with success() — that is the entire mechanism, and it is why this
+        # step survives an earlier step's death when nothing else does.
+        # Deliberately failure() and NOT always()/cancelled(): this job's
+        # concurrency group cancels a stale run whenever the same SHA is
+        # re-dispatched, and firing on routine cancellation would train the
+        # operator to ignore the one signal that means something.
+        if: failure()
+        env:
+          MERGE_SHA: ${{ github.sha }}
+          POLL_OUTCOME: ${{ steps.poll.outputs.outcome }}
+        run: |
+          set -uo pipefail
+          RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          DETAIL="Health gate did not reach a verdict for merge ${MERGE_SHA}. This merge is UNWATCHED - no automatic revert will happen for it. Last recorded poll outcome: '${POLL_OUTCOME:-none}'. Run: ${RUN_URL}"
+
+          # Emitted FIRST, and with no cluster dependency whatsoever, so
+          # unlike the Event below it cannot itself be silenced by whatever
+          # failure got us here. This is the guaranteed signal; the Event is
+          # the best-effort one.
+          echo "::error title=Health gate did not reach a verdict::${DETAIL}"
+          {
+            echo "### Health gate did not reach a verdict"
+            echo ""
+            echo "${DETAIL}"
+          } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+
+          # Both guards exist because an early bootstrap/auth failure is
+          # exactly the case this step must survive: on that path kubectl was
+          # never installed and KUBECONFIG was never exported, so referencing
+          # either unguarded would abort the backstop itself.
+          if ! command -v kubectl >/dev/null 2>&1; then
+            echo "WARNING: kubectl is not on PATH (the bootstrap step never completed) - the GitHub annotation above is the only signal for this run"
+            exit 0
+          fi
+          if [ -z "${KUBECONFIG:-}" ]; then
+            echo "WARNING: KUBECONFIG was never exported (the authenticate step never completed) - the GitHub annotation above is the only signal for this run"
+            exit 0
+          fi
+
+          NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+          # reason MUST stay on Robusta's four-entry allow-list
+          # (kubernetes/apps/observability/robusta/app/helmrelease.yaml) -
+          # an invented reason is silently dropped until that HelmRelease
+          # reconciles, which would recreate the exact silence this step
+          # exists to prevent. HealthGateInconclusive is also honest here:
+          # the gate reached no conclusion. It is distinguished from the
+          # ordinary inconclusive event by metadata.name, which Robusta
+          # renders as the Slack title ("title: $name").
+          #
+          # Targets flux-system/cluster-apps so it never depends on poll data
+          # that, on this path, may not exist.
+          if ! kubectl create -f - <<EOF
+          apiVersion: v1
+          kind: Event
+          metadata:
+            name: health-gate-backstop-no-verdict-${GITHUB_RUN_ID}
+            namespace: flux-system
+          involvedObject:
+            apiVersion: kustomize.toolkit.fluxcd.io/v1
+            kind: Kustomization
+            name: cluster-apps
+            namespace: flux-system
+          reason: HealthGateInconclusive
+          message: "${DETAIL}"
+          type: Warning
+          firstTimestamp: "${NOW}"
+          lastTimestamp: "${NOW}"
+          count: 1
+          source:
+            component: health-gate.yaml
+          EOF
+          then
+            echo "WARNING: could not create the HealthGateInconclusive backstop Event - the GitHub annotation above is the only signal for this run"
+          fi
+
+          # Always 0. The job's failed conclusion already comes from the step
+          # that actually broke; failing here too would mask the real cause.
+          exit 0

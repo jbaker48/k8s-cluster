@@ -34,6 +34,7 @@ jobs:
           PR_AUTHOR_LOGIN: ${{ github.event.pull_request.user.login }}
           PR_AUTHOR_TYPE: ${{ github.event.pull_request.user.type }}
         run: |
+          set -euo pipefail
           IS_BYPASS="false"
           # Branch prefix, label, and non-fork are necessary but NOT sufficient — any
           # collaborator with ordinary push/label rights can forge those three. The
@@ -56,18 +57,62 @@ jobs:
         name: Fetch exclusion config from base branch
         env:
           GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
-          gh api "repos/${{ github.repository }}/contents/.github/exclusion-gate.yaml?ref=${{ github.event.pull_request.base.sha }}" \
-            --jq '.content' | base64 -d > /tmp/exclusion-gate.yaml
+          # `set -euo pipefail` is load-bearing here, not boilerplate. Without
+          # `pipefail` the `gh api ... | base64 -d` pipeline reports the exit
+          # status of `base64 -d`, which SUCCEEDS on empty input — so a failed,
+          # rate-limited, or unauthorized gh call left an empty
+          # /tmp/exclusion-gate.yaml behind and exited 0. Downstream that
+          # produced zero categories and a published verdict of
+          # excluded=false: the hard-exclusion gate silently permitting exactly
+          # what it exists to block. Fail-OPEN, found during the G-05-2 audit.
+          set -euo pipefail
+          if ! gh api "repos/${REPO}/contents/.github/exclusion-gate.yaml?ref=${BASE_SHA}" \
+               --jq '.content' | base64 -d > /tmp/exclusion-gate.yaml; then
+            echo "::error::Failed to fetch .github/exclusion-gate.yaml at ${BASE_SHA} — failing closed rather than evaluating an empty exclusion config."
+            exit 1
+          fi
+          # A fetch that "succeeded" into an empty or unparseable file is
+          # indistinguishable downstream from a config that legitimately
+          # declares zero exclusion categories, so assert the content
+          # explicitly: non-empty, parses, and carries at least one category.
+          # A red check is the correct fail-closed state for a security gate;
+          # a permissive verdict derived from an empty file is not.
+          if [ ! -s /tmp/exclusion-gate.yaml ]; then
+            echo "::error::Fetched .github/exclusion-gate.yaml is empty — refusing to evaluate exclusions against an empty config."
+            exit 1
+          fi
+          if ! CATEGORY_COUNT=$(yq -o=json '. | keys | length' /tmp/exclusion-gate.yaml 2>/tmp/exclusion-config-err.log); then
+            echo "::error::Fetched .github/exclusion-gate.yaml does not parse as a YAML map — refusing to evaluate exclusions against it."
+            cat /tmp/exclusion-config-err.log || true
+            exit 1
+          fi
+          if [ "${CATEGORY_COUNT}" -lt 1 ]; then
+            echo "::error::Fetched .github/exclusion-gate.yaml declares zero exclusion categories — refusing to publish a not-excluded verdict from it."
+            exit 1
+          fi
+          echo "exclusion config fetched: ${CATEGORY_COUNT} categories"
 
       - if: steps.bypass.outputs.is_bypass != 'true'
         name: Build paths-filter map
         id: build-filters
         run: |
+          set -euo pipefail
           # Derived generically from exclusion-gate.yaml's top-level keys so a new
           # category added to the config is automatically enforced here — no hardcoded
           # category list to keep in sync (see CR-02, 01-REVIEW.md).
           FILTERS=$(yq -o=json 'with_entries(.value = .value.paths)' /tmp/exclusion-gate.yaml)
+          # yq emits nothing (exit 0) for an empty document, so an empty
+          # $FILTERS would hand dorny/paths-filter an empty filter set and
+          # every category would evaluate to a silent "false". The fetch step
+          # above already asserts a non-empty config; this is the second,
+          # independent check that the map actually reached this step.
+          if [ -z "${FILTERS}" ] || [ "${FILTERS}" = "null" ]; then
+            echo "::error::Built an empty paths-filter map from /tmp/exclusion-gate.yaml — refusing to evaluate path filters against it."
+            exit 1
+          fi
           {
             echo "filters<<EOF"
             echo "$FILTERS"
@@ -87,18 +132,34 @@ jobs:
         env:
           FILTER_OUTPUTS: ${{ toJSON(steps.filter.outputs) }}
         run: |
+          set -euo pipefail
           # Iterates category keys straight from exclusion-gate.yaml (in file order, so
           # ordering stays deterministic and stable as categories are added) instead of
           # enumerating them a second time here (see CR-02, 01-REVIEW.md).
           EXCLUDED=false
           REASONS=""
-          for key in $(yq -o=json '. | keys' /tmp/exclusion-gate.yaml | jq -r '.[]'); do
+          # The key list is resolved and asserted BEFORE the loop rather than
+          # inline as `for key in $(yq ... | jq ...)`. A command substitution in
+          # a for-list is NOT subject to `-e`: when it failed, the loop simply
+          # iterated zero times and this step published excluded=false with
+          # exit 0 (verified: `bash -e -c 'for k in $(yq ...bad...); do ...'`
+          # survives at status 0). That is a fail-OPEN in the one gate that is
+          # supposed to be non-negotiable, so the failure is made explicit here.
+          if ! CATEGORY_KEYS=$(yq -o=json '. | keys' /tmp/exclusion-gate.yaml | jq -r '.[]'); then
+            echo "::error::Could not enumerate exclusion categories from /tmp/exclusion-gate.yaml — failing closed instead of publishing excluded=false."
+            exit 1
+          fi
+          if [ -z "${CATEGORY_KEYS}" ]; then
+            echo "::error::Exclusion config yielded zero categories — refusing to publish a not-excluded verdict from an empty category list."
+            exit 1
+          fi
+          while IFS= read -r key; do
             MATCHED=$(echo "$FILTER_OUTPUTS" | jq -r --arg k "$key" '.[$k] // "false"')
             if [[ "$MATCHED" == "true" ]]; then
               EXCLUDED=true
               REASONS="$REASONS- $(yq eval ".[\"${key}\"].reason" /tmp/exclusion-gate.yaml)"$'\n'
             fi
-          done
+          done <<< "${CATEGORY_KEYS}"
           echo "excluded=$EXCLUDED" >> "$GITHUB_OUTPUT"
           {
             echo "reasons<<EOF"
@@ -122,6 +183,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
           gh pr edit "${{ github.event.pull_request.number }}" \
             --repo "${{ github.repository }}" \
             --add-label "gate/human-required"
@@ -140,23 +202,59 @@ jobs:
         name: Fetch circuit-breaker state from base branch
         env:
           GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
-          gh api "repos/${{ github.repository }}/contents/.github/health-gate/circuit-breaker-state.json?ref=${{ github.event.pull_request.base.sha }}" \
-            --jq '.content' | base64 -d > /tmp/circuit-breaker-state.json
+          # Identical fail-OPEN shape to the exclusion-config fetch above: with
+          # no `pipefail`, a failed gh call still exited 0 through `base64 -d`,
+          # leaving an empty state file. `jq -r '.[$b].paused // false'` on an
+          # empty file prints NOTHING and exits 0 (verified), so IS_PAUSED came
+          # back empty, never matched "true", and the circuit breaker reported
+          # paused=false — i.e. a tripped breaker silently stopped being
+          # enforced. Found during the G-05-2 audit.
+          set -euo pipefail
+          if ! gh api "repos/${REPO}/contents/.github/health-gate/circuit-breaker-state.json?ref=${BASE_SHA}" \
+               --jq '.content' | base64 -d > /tmp/circuit-breaker-state.json; then
+            echo "::error::Failed to fetch .github/health-gate/circuit-breaker-state.json at ${BASE_SHA} — failing closed rather than evaluating an empty circuit-breaker state."
+            exit 1
+          fi
+          # An empty file is NOT the same as an empty breaker state: `{}` is the
+          # legitimate no-reverts-recorded value and passes this assertion, an
+          # empty or non-object file does not.
+          if [ ! -s /tmp/circuit-breaker-state.json ]; then
+            echo "::error::Fetched circuit-breaker-state.json is empty — refusing to evaluate the breaker against it (an empty state reads as paused=false for every bucket)."
+            exit 1
+          fi
+          if ! jq -e 'type == "object"' /tmp/circuit-breaker-state.json >/dev/null; then
+            echo "::error::Fetched circuit-breaker-state.json is not a JSON object — refusing to evaluate the breaker against it."
+            exit 1
+          fi
 
       - if: steps.bypass.outputs.is_bypass != 'true'
         name: Resolve touched app buckets
         id: buckets
         env:
           GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
+          set -euo pipefail
           # Read-only PR-files listing (never a checkout/execution of PR-controlled
           # content) — extracts every unique kubernetes/apps/<namespace>/<app>
           # two-segment prefix touched by this PR. Zero buckets is a valid outcome.
-          BUCKETS=$(gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" \
-            --paginate --jq '.[].filename' \
-            | awk -F/ '$1=="kubernetes" && $2=="apps" && NF>=4 {print $3"/"$4}' \
-            | sort -u | jq -R . | jq -sc .)
+          #
+          # Without `pipefail` a failed gh call was swallowed by the tail of
+          # this pipeline and yielded an empty bucket list, which the unscoped
+          # fallback below then turned into a confident-looking wrong answer —
+          # so a genuinely paused bucket went unenforced. Guarded so the fetch
+          # failure is loud and the check goes red instead.
+          if ! BUCKETS=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/files" \
+               --paginate --jq '.[].filename' \
+               | awk -F/ '$1=="kubernetes" && $2=="apps" && NF>=4 {print $3"/"$4}' \
+               | sort -u | jq -R . | jq -sc .); then
+            echo "::error::Failed to list files for PR #${PR_NUMBER} — cannot resolve app buckets, so the circuit-breaker state cannot be evaluated. Failing closed."
+            exit 1
+          fi
           # Mirror health-gate.yaml's unscoped fallback: a PR touching zero
           # kubernetes/apps/ paths must still be checked against the unscoped
           # bucket, or a paused unscoped circuit-breaker is never enforced.
@@ -171,16 +269,28 @@ jobs:
         env:
           BUCKETS: ${{ steps.buckets.outputs.buckets }}
         run: |
+          set -euo pipefail
           PAUSED=false
           REASONS=""
-          for bucket in $(echo "$BUCKETS" | jq -r '.[]'); do
+          # Same for-list exemption as the category loop above: a failing
+          # command substitution here would iterate zero buckets and publish
+          # paused=false. Resolved and asserted before the loop instead.
+          if ! BUCKET_LIST=$(echo "$BUCKETS" | jq -r '.[]'); then
+            echo "::error::Could not parse the resolved bucket list — failing closed instead of publishing paused=false."
+            exit 1
+          fi
+          if [ -z "${BUCKET_LIST}" ]; then
+            echo "::error::Resolved bucket list is empty — refusing to publish a not-paused verdict without checking any bucket."
+            exit 1
+          fi
+          while IFS= read -r bucket; do
             IS_PAUSED=$(jq -r --arg b "$bucket" '.[$b].paused // false' /tmp/circuit-breaker-state.json)
             if [[ "$IS_PAUSED" == "true" ]]; then
               PAUSED=true
               COUNT=$(jq -r --arg b "$bucket" '.[$b].reverts | length' /tmp/circuit-breaker-state.json)
               REASONS="$REASONS- \`$bucket\`: $COUNT revert(s) recorded, paused pending human re-enable"$'\n'
             fi
-          done
+          done <<< "${BUCKET_LIST}"
           echo "paused=$PAUSED" >> "$GITHUB_OUTPUT"
           {
             echo "reasons<<EOF"
@@ -207,6 +317,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
           gh pr edit "${{ github.event.pull_request.number }}" \
             --repo "${{ github.repository }}" \
             --add-label "gate/human-required"

@@ -53,7 +53,21 @@ spec:
             hostnames:
               - "litellm.${SECRET_DOMAIN}"
         containers:
+          # GitHub's Actions service enforces a rolling MINIMUM runner version.
+          # When the pinned runner falls below it the service rejects the runner
+          # and the container exits with code 7 (RunnerVersionDeprecated). ARC
+          # 0.14.2 maps that to EphemeralRunner -> EphemeralRunnerSet ->
+          # AutoscalingRunnerSet status.phase=Outdated, which is an ABSORBING
+          # state: it deletes the listener, the ephemeral runner sets AND the
+          # GitHub-side runner scale set, then never recreates anything and
+          # never requeues (autoscalingrunnerset_controller.go L184/L246/L261).
+          # CI is then silently and permanently dead, surviving controller
+          # restarts. See upstream actions/actions-runner-controller #4595,
+          # #4596 and #4600.
+          # KEEP THIS PINNED AT OR NEAR THE LATEST actions/runner RELEASE.
+          # Tracked by the "ARC runner image" customManager in
+          # .github/renovate.json5.
           - name: runner
-            image: ghcr.io/actions/actions-runner:2.334.0
+            image: ghcr.io/actions/actions-runner:2.336.0
             imagePullPolicy: IfNotPresent
             command: ["/home/runner/run.sh"]

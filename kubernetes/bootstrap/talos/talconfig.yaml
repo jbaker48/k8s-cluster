@@ -52,8 +52,6 @@ nodes:
     installDisk: "/dev/nvme0n1"
     # talosImageURL: factory.talos.dev/installer/176603246fc5e700eec6b7044a57dd2bd0521b1d8da6e335c5c24bd66dafba4b
     controlPlane: true
-    nodeTaints:
-      dedicated: "frigate:NoSchedule"
     networkInterfaces:
       - deviceSelector:
           hardwareAddr: "c8:a3:62:b7:5a:24"

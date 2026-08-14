@@ -42,8 +42,18 @@ spec:
                 mountPath: /usr/local/bin
         serviceAccountName: ha-restarter
         containers:
+          # See the equivalent note in
+          # ../../k8s-cluster-ci/app/helmrelease.yaml. A runner below GitHub's
+          # rolling minimum version exits with code 7 and wedges the
+          # AutoscalingRunnerSet permanently in phase Outdated on ARC 0.14.2.
+          # This scale set was pinned to the same stale 2.334.0 and was a
+          # latent identical failure - it only survived the 2026-08-12 incident
+          # because it happened not to run a job after GitHub's cutover.
+          # KEEP THIS PINNED AT OR NEAR THE LATEST actions/runner RELEASE.
+          # Tracked by the "ARC runner image" customManager in
+          # .github/renovate.json5.
           - name: runner
-            image: ghcr.io/actions/actions-runner:2.334.0
+            image: ghcr.io/actions/actions-runner:2.336.0
             imagePullPolicy: IfNotPresent
             command: ["/home/runner/run.sh"]
             volumeMounts:

@@ -198,6 +198,24 @@
         "datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)( repository=(?<registryUrl>\\S+))?\\n.+: (&\\S+\\s)?(?<currentValue>\\S+)"
       ],
       "datasourceTemplate": "{{#if datasource}}{{{datasource}}}{{else}}github-releases{{/if}}"
+    },
+    {
+      "customType": "regex",
+      // ARC runner image. This lives inside a Flux HelmRelease's inline
+      // spec.values.template, which the flux/helm-values/kubernetes managers do
+      // not extract, so it was never tracked and silently went stale. GitHub's
+      // Actions service enforces a rolling MINIMUM runner version; once the pin
+      // drops below it the runner exits 7 (RunnerVersionDeprecated) and ARC
+      // 0.14.2 wedges the AutoscalingRunnerSet permanently in phase Outdated,
+      // taking all self-hosted CI down silently. See upstream #4595/#4596/#4600
+      // and .planning/debug/resolved/arc-k8s-cluster-ci-no-listener.md.
+      "description": ["ARC runner image pinned inside Flux HelmRelease inline values"],
+      "fileMatch": ["(^|/)kubernetes/apps/arc-runners/.+\\.ya?ml(?:\\.j2)?$"],
+      "matchStrings": [
+        "image:\\s+(?<depName>ghcr\\.io/actions/actions-runner):(?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)"
+      ],
+      "datasourceTemplate": "docker",
+      "versioningTemplate": "semver"
     }
   ]
 }

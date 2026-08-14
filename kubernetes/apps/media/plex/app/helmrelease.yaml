@@ -32,8 +32,8 @@ spec:
         containers:
           app:
             image:
-              repository: ghcr.io/onedr0p/plex
-              tag: 1.41.0.8994-f2c27da23@sha256:fe9ed1189617cd98106635c63ed39d40e4ec82535514e4a51a7c72e56b65c4dd
+              repository: ghcr.io/home-operations/plex
+              tag: 1.43.3.10861@sha256:235402dacb4c66224052de3dfd4c444044e792185ab27dc83b5c200a55370492
             env:
               TZ: ${TIMEZONE}
               PLEX_ADVERTISE_URL: >-

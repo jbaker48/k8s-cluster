@@ -184,3 +184,9 @@ Finally, confirm the node appears in the **Tailscale admin console** as `claude-
   kubelet will restart the container.
 - **A missing `CLAUDE_CODE_SSH_AUTHORIZED_KEYS` is not fatal**, but it silently means no ssh and
   no mosh. Check the app logs for the warning if tailnet access does not work.
+- **The tailscale sidecar runs in kernel mode and needs `/dev/net/tun`.** On this cluster that
+  device is handed out by `generic-device-plugin` (same namespace) as the extended resource
+  `squat.ai/tun`, which the sidecar requests — the same pattern `media/qbittorrent` already uses.
+  If the pod sits `Pending` with an insufficient-`squat.ai/tun` event, check that the
+  generic-device-plugin DaemonSet is healthy on the target node; without the device,
+  `tailscaled` cannot create its interface.

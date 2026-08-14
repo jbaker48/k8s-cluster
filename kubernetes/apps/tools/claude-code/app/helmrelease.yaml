@@ -40,10 +40,10 @@ spec:
           app:
             image:
               repository: ghcr.io/jbaker48/claude-code
-              # TODO: pin to the published <version>-<sha> tag once the first
-              # GHCR build runs. The image does not exist until the containers
-              # repo's feat/claude-code branch is merged — see README.md.
-              tag: latest
+              # <claude-code CLI version>-<containers repo short sha>. Built and
+              # pushed by hand from containers@35d51b7 because Actions is stuck
+              # in that repo (runs queue with zero jobs) — see README.md.
+              tag: 2.1.232-35d51b7
             env:
               GIT_USER_NAME: Jon Baker
               GIT_USER_EMAIL: jonbaker85@gmail.com

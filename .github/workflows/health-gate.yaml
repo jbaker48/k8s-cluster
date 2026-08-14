@@ -92,17 +92,31 @@ jobs:
       - name: Poll Flux conditions and classify
         id: poll
         run: |
+          # Omitting -e here does NOT disable it. GitHub invokes every run:
+          # step as `bash -e {0}`, so -e is active regardless of what this
+          # line says — the same fact this file already records at the
+          # "git revert, or abort" step below. That is what made the retry
+          # guard in this loop dead code: a bare `RAW_OUTPUT=$(kubectl ...)`
+          # followed by `KCTL_STATUS=$?` exits the shell on the FIRST line,
+          # so neither the status capture nor the WARNING/sleep/continue
+          # below it ever ran. Found live on run 31778908203 (gap G-05-2):
+          # the step died at 240s of a 900s window having emitted zero
+          # stdout and no outcome= at all, which skipped the inconclusive
+          # notification and the entire revert path — the gate silently did
+          # nothing. Fail-SILENT, not fail-closed.
+          #
+          # What now makes the fall-through reachable is testing every
+          # fallible command as the direct condition of `if`/`elif`, which
+          # is exempt from -e's early-exit — the same shape commit 3f26bb5f
+          # used for git revert. -e is deliberately left in force so that a
+          # fallible command NOT wrapped this way still fails loudly rather
+          # than being silently skipped.
           set -uo pipefail
-          # Deliberately WITHOUT -e: a transient kubectl failure inside the
-          # loop must be tolerated and retried, never abort the script —
-          # the fail-closed guarantee lives in the classification logic
-          # below (an errored iteration can only ever fall through to
-          # "keep polling"/"inconclusive", never "healthy"), not in
-          # aborting on the first error.
 
           DEADLINE_EPOCH=$(( $(date +%s) + WINDOW_SECONDS ))
           OUTCOME=""
           LAST_JSON=""
+          RAW_OUTPUT=""
           STALLED_OR_FAILED_JSON="[]"
           NOT_READY_JSON="[]"
 
@@ -134,23 +148,42 @@ jobs:
           '
 
           while [ "$(date +%s)" -lt "${DEADLINE_EPOCH}" ]; do
-            RAW_OUTPUT=$(kubectl get kustomizations.kustomize.toolkit.fluxcd.io,helmreleases.helm.toolkit.fluxcd.io -A -o json 2>/tmp/poll-err.log)
-            KCTL_STATUS=$?
+            POLL_ERROR=""
 
-            if [ "${KCTL_STATUS}" -ne 0 ] || ! echo "${RAW_OUTPUT}" | jq -e . >/dev/null 2>&1; then
-              # Fail-closed guarantee: an errored/non-JSON iteration only
-              # ever falls through to "keep polling" — it can never set
-              # OUTCOME, so it can never produce a "healthy" verdict.
-              echo "WARNING: kubectl poll failed or returned non-JSON output (exit=${KCTL_STATUS}); retrying in ${POLL_INTERVAL_SECONDS}s"
+            # One if/elif chain covering every fallible command in the
+            # iteration, each in a condition context so -e cannot terminate
+            # the step. The classification substitutions are guarded for the
+            # same reason as the kubectl call, not merely for tidiness: a
+            # Kubernetes API error body such as {"kind":"Status",...} passes
+            # the `jq -e .` syntax check above and then breaks the .items[]
+            # classifier, which killed the step at jq's exit 5 just as surely
+            # as a failed kubectl did.
+            if ! RAW_OUTPUT=$(kubectl get kustomizations.kustomize.toolkit.fluxcd.io,helmreleases.helm.toolkit.fluxcd.io -A -o json 2>/tmp/poll-err.log); then
+              POLL_ERROR="kubectl poll failed"
+            elif ! echo "${RAW_OUTPUT}" | jq -e . >/dev/null 2>&1; then
+              POLL_ERROR="kubectl poll failed to return JSON"
+            elif ! RESULT=$(echo "${RAW_OUTPUT}" | jq -c "${JQ_CLASSIFY}" 2>>/tmp/poll-err.log) \
+              || ! STALLED_COUNT=$(echo "${RESULT}" | jq '.stalled_or_failed | length' 2>>/tmp/poll-err.log) \
+              || ! ALL_READY=$(echo "${RESULT}" | jq -r '.all_ready' 2>>/tmp/poll-err.log); then
+              POLL_ERROR="kubectl poll returned JSON that is not a resource list this classifier can read"
+            fi
+
+            if [ -n "${POLL_ERROR}" ]; then
+              # Fail-closed guarantee: an errored/unclassifiable iteration
+              # only ever falls through to "keep polling" — it can never set
+              # OUTCOME, so it can never produce a "healthy" verdict. One
+              # shared fall-through for every failure mode above, so no
+              # future branch can be added that skips the sleep/continue.
+              echo "WARNING: ${POLL_ERROR}; retrying in ${POLL_INTERVAL_SECONDS}s"
               cat /tmp/poll-err.log 2>/dev/null || true
               sleep "${POLL_INTERVAL_SECONDS}"
               continue
             fi
 
+            # Only assigned once the payload has classified cleanly, so the
+            # post-loop not-ready extraction can never inherit a shape the
+            # classifier already rejected.
             LAST_JSON="${RAW_OUTPUT}"
-            RESULT=$(echo "${RAW_OUTPUT}" | jq -c "${JQ_CLASSIFY}")
-            STALLED_COUNT=$(echo "${RESULT}" | jq '.stalled_or_failed | length')
-            ALL_READY=$(echo "${RESULT}" | jq -r '.all_ready')
 
             if [ "${STALLED_COUNT}" -gt 0 ]; then
               OUTCOME="unhealthy"
@@ -167,7 +200,14 @@ jobs:
           if [ -z "${OUTCOME}" ]; then
             OUTCOME="inconclusive"
             if [ -n "${LAST_JSON}" ]; then
-              NOT_READY_JSON=$(echo "${LAST_JSON}" | jq -c '
+              # Guarded for the same reason as the loop above: this runs
+              # AFTER the outcome is decided but BEFORE it is written to
+              # $GITHUB_OUTPUT, so an unguarded failure here would discard a
+              # verdict the gate had already reached and skip every
+              # notification below. NOT_READY_JSON keeps its "[]" initializer
+              # on that path — an empty list is handled explicitly by the
+              # inconclusive-notification step.
+              if ! NOT_READY_JSON=$(echo "${LAST_JSON}" | jq -c '
                 def readyCond: (.status.conditions // []) | map(select(.type=="Ready")) | (.[0] // null);
                 def resourceType:
                   if .kind == "Kustomization" then "kustomizations.kustomize.toolkit.fluxcd.io"
@@ -175,7 +215,10 @@ jobs:
                   else (.kind | ascii_downcase) + "s"
                   end;
                 [ .items[] | select((readyCond.status // "") != "True") | {namespace: .metadata.namespace, name: .metadata.name, kind: .kind, resource: resourceType} ]
-              ')
+              '); then
+                echo "WARNING: could not extract the not-ready list from the last successful poll; reporting inconclusive with an empty list"
+                NOT_READY_JSON="[]"
+              fi
             fi
           fi
 

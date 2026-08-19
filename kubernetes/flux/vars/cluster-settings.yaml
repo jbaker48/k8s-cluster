@@ -9,6 +9,14 @@ data:
   CLUSTER_CIDR: "10.69.0.0/16"
   SERVICE_CIDR: "10.96.0.0/16"
   NODE_CIDR: "10.20.0.0/24"
+  # Talos shared control-plane VIP (talconfig.yaml `endpoint` /
+  # networkInterfaces[].vip.ip). Floats across the control-plane nodes via
+  # etcd leader election, so it is NEVER an address in the default/kubernetes
+  # Endpoints object and Cilium therefore does not label it
+  # reserved:kube-apiserver on any node except the one currently holding it.
+  # Anything writing an egress policy for the API server address that clients
+  # actually dial must reference this explicitly.
+  KUBE_API_VIP_ADDR: "10.20.0.250"
   SVC_K8S_GATEWAY_ADDR: "10.20.0.50"
   SVC_POSTGRES_ADDR: "10.213.0.58"
   SVC_POSTGRES_VECTOR_ADDR: "10.20.0.59"

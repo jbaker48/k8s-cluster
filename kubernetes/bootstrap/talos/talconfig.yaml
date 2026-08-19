@@ -274,3 +274,4 @@ controlPlane:
             allowedKubernetesNamespaces:
               - actions-runner-system
               - system-upgrade
+# THROWAWAY: exclusion-gate live proof for quick task 260819-t19 — do not merge; this branch is deleted immediately.

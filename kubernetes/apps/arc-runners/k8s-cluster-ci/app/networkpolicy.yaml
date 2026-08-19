@@ -129,5 +129,56 @@ spec:
     #    apiserver - avoids the toServices pitfall already documented in
     #    rule 3 above (silently dropped traffic on this cluster's Cilium
     #    version) and avoids guessing the apiserver's ClusterIP/port.
+    #
+    #    COVERS ONLY the node IPs. See rule 6 - this rule alone is NOT enough
+    #    for the address HEALTH_GATE_KUBECONFIG actually dials.
     - toEntities:
         - kube-apiserver
+
+    # 6. Talos shared control-plane VIP (${KUBE_API_VIP_ADDR}:6443).
+    #
+    #    Rule 5 is necessary but NOT sufficient. Cilium derives the
+    #    reserved:kube-apiserver identity label from the addresses listed in the
+    #    default/kubernetes Endpoints object, which on this cluster is exactly
+    #    10.20.0.14 / 10.20.0.15 / 10.20.0.16 - the node IPs. The Talos shared
+    #    control-plane VIP is a floating address elected via etcd and is never
+    #    an apiserver Endpoint, so Cilium cannot attach the kube-apiserver label
+    #    to it cluster-wide. Confirmed live with `cilium-dbg bpf ipcache get`:
+    #
+    #      talos01 (currently holds the VIP): 10.20.0.250 -> identity 1
+    #                                         (reserved:host +
+    #                                          reserved:kube-apiserver)  ALLOW
+    #      talos02 (does not hold it):        10.20.0.250 -> identity 2
+    #                                         (reserved:world)            DROP
+    #      talos03 (does not hold it):        10.20.0.250 -> identity 2
+    #                                         (reserved:world)            DROP
+    #
+    #    A CiliumNetworkPolicy with any egress section is default-deny-egress
+    #    for every endpoint it selects, so on talos02/talos03 NOTHING matched
+    #    the VIP on 6443 and the SYN was silently dropped, surfacing as `dial
+    #    tcp 10.20.0.250:6443: i/o timeout`. Whether CI could reach the API was
+    #    therefore a coin flip on scheduler placement vs. VIP ownership - it
+    #    worked on 2026-08-07 (runner landed on the VIP holder) and broke from
+    #    2026-08-14 (runner consistently landed on talos03, pod IP 10.69.0.182).
+    #    This silently disabled BOTH exclusion-gate.yaml's HardExclusionBlocked
+    #    notification AND health-gate.yaml's entire poll/auto-revert safety net.
+    #
+    #    This is an upstream Cilium limitation with no entity-based remedy - the
+    #    kube-apiserver entity has no mechanism for control-plane VIPs
+    #    (cilium/cilium #29323, #36136, #42367). An explicit /32 is the
+    #    documented workaround. Deliberately scoped to the single VIP address
+    #    and port 6443 only: this grants no broader reserved:world egress, so
+    #    the litellm-only-egress property this policy exists to enforce is
+    #    preserved.
+    #
+    #    NOTE ON REDUNDANCY: on the node that holds the VIP the address resolves
+    #    to reserved:host, which CIDR rules cannot select - but rule 5 already
+    #    covers that case because identity 1 carries reserved:kube-apiserver.
+    #    Rules 5 and 6 are complementary, and together they are deterministic on
+    #    every node regardless of where the VIP currently lives.
+    - toCIDR:
+        - "${KUBE_API_VIP_ADDR}/32"
+      toPorts:
+        - ports:
+            - port: "6443"
+              protocol: TCP

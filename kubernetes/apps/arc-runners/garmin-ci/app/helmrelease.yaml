@@ -37,6 +37,19 @@ spec:
       spec:
         serviceAccountName: garmin-ci
         automountServiceAccountToken: false
+        # Discovered live during 39-01 Task 3: talos02 (the node D-01/D-02 measured as the
+        # only one with request headroom) carries a stale dedicated=frigate:NoSchedule taint
+        # left over from eac3ac1d, even though 2273acd4 moved Frigate itself off talos02 in
+        # July 2026. Without this toleration the scheduler reports "1 node(s) had untolerated
+        # taint(s)" for talos02 and "Insufficient cpu"/"Insufficient memory" for talos01/03,
+        # which are both >85% requested -- the runner Pod cannot schedule anywhere. Matches the
+        # existing precedent already used twice in this repo for the same reason: 61fbf0e3
+        # (cloudnative-pg cluster17) and 68c6f1ab (intel-gpu-plugin).
+        tolerations:
+          - key: dedicated
+            operator: Equal
+            value: frigate
+            effect: NoSchedule
         containers:
           # GitHub's Actions service enforces a rolling MINIMUM runner version.
           # When the pinned runner falls below it the service rejects the runner

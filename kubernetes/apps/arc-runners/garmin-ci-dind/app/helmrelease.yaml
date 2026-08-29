@@ -25,13 +25,17 @@ spec:
   values:
     githubConfigUrl: "https://github.com/jbaker48/garmin-ai-coach"
     githubConfigSecret: arc-github-secret-garmin-ci-dind
-    # D-02 starting value: 500m/4Gi per Pod (250m dind + 250m runner, 2Gi + 2Gi requests) x
-    # maxRunners: 2 here plus garmin-ci's maxRunners: 4 @ 500m/4Gi = 3 vCPU / 24Gi requests
-    # total, against talos02's measured 4825m / ~33GiB free -- the only node in the cluster
-    # with real headroom by request (see 39-CONTEXT.md's per-node table). minRunners: 0 per
-    # D-03, matching the k8s-cluster-ci/ha-restarter/garmin-ci convention.
+    # D-02 revised value (post cluster-rebuild, 39-02 continuation): capped to maxRunners: 1,
+    # NOT the originally-planned 2. 39-CONTEXT.md's per-node table is stale -- it assumed a
+    # healthier node layout that no longer holds after the rebuild. Live headroom by memory
+    # request as of this change: talos01 ~83% requested (~3.8Gi free, too tight for a 4Gi-request
+    # Pod), talos02 ~24% requested (~36Gi free -- the only node with real room), talos03 ~98%
+    # requested (effectively full). One dind Pod (500m CPU / 4Gi requests / 12Gi limits) fits
+    # talos02 comfortably; two would stack 24Gi of limits onto that single node. Revisit upward
+    # once node headroom allows -- see 39-02-SUMMARY.md follow-ups. minRunners: 0 per D-03,
+    # matching the k8s-cluster-ci/ha-restarter/garmin-ci convention.
     minRunners: 0
-    maxRunners: 2
+    maxRunners: 1
     controllerServiceAccount:
       namespace: arc-systems
       name: actions-runner-controller-gha-rs-controller

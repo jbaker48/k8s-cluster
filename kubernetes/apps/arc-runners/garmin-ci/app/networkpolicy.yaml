@@ -154,6 +154,20 @@ spec:
             - port: "443"
               protocol: TCP
 
+    # 39-04 Task 3: the `evals` job (garmin-ai-coach ci.yml, run 33277966304)
+    # hung on its `astral-sh/setup-uv@v5` step -- Hubble confirmed repeated
+    # DROPPED SYN packets from the runner Pod to releases.astral.sh
+    # (172.67.68.3 et al.), resolved via `cilium-dbg fqdn cache list`. This is
+    # the uv binary's own release-download host, distinct from `astral.sh`
+    # (seeded above for pypi/uv's install-script host). Needed by every job
+    # using `astral-sh/setup-uv@v5`, including deploy-dev.yml's `smoke` job.
+    - toFQDNs:
+        - matchName: "releases.astral.sh"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+
     # Deliberately absent at this point: the rest of AWS (CloudFormation/S3/
     # ECR/Lambda/KMS in us-west-2, STS/Bedrock in us-east-1), OpenRouter.
     # These are added as each is observed dropped via Hubble, per D-13's

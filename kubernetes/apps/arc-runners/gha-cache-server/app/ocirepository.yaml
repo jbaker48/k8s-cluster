@@ -1,0 +1,17 @@
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: gha-cache-server
+  namespace: arc-runners
+spec:
+  interval: 15m
+  layerSelector:
+    mediaType: application/vnd.cncf.helm.chart.content.v1.tar+gzip
+    operation: copy
+  ref:
+    # Same app-template chart version already in use by ai/garmin-ai-coach
+    # (kubernetes/apps/ai/garmin-ai-coach/app/ocirepository.yaml) — reusing
+    # the in-use version introduces no new chart to the cluster.
+    tag: 4.4.0
+  url: oci://ghcr.io/bjw-s-labs/helm/app-template

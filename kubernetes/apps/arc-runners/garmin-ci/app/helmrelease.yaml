@@ -65,10 +65,39 @@ spec:
           # KEEP THIS PINNED AT OR NEAR THE LATEST actions/runner RELEASE.
           # Tracked by the "ARC runner image" customManager in
           # .github/renovate.json5.
+          #
+          # 39-06: swapped from the stock ghcr.io/actions/actions-runner to this
+          # falcondev-oss fork. The stock runner does not permit overriding
+          # ACTIONS_RESULTS_URL -- GitHub injects the value itself -- so the fork is
+          # mandatory for D-04's on-cluster cache server, not a convenience choice
+          # (39-06-PLAN.md Risk 3). Adopted by explicit operator decision at a
+          # blocking-human checkpoint (39-06-SUMMARY.md, verbatim answer
+          # "adopt-pinned-by-digest"), pinned by BOTH tag and @sha256 digest per that
+          # ruling: the digest makes the pin immutable against a tag re-push (the
+          # realistic supply-chain vector for an 11-star/5-fork upstream holding
+          # full job-execution privileges, including the AWS OIDC exchange path,
+          # on every garmin-ci job), while the tag keeps the pin matched by the
+          # extended "ARC runner image" customManager in .github/renovate.json5 --
+          # an untracked pin is exactly the D-06 failure mode the comment above
+          # already documents once. Digest re-verified live immediately before
+          # this edit landed (see 39-06-SUMMARY.md).
           - name: runner
-            image: ghcr.io/actions/actions-runner:2.336.0
+            image: ghcr.io/falcondev-oss/actions-runner:2.336.0@sha256:b0cbd599b4124962a91930f85b0061adc5a5aaf874221d29741411fc661a259b
             imagePullPolicy: IfNotPresent
             command: ["/home/runner/run.sh"]
+            env:
+              # Risk 4 (39-CONTEXT.md): this variable carries job RESULTS traffic, not
+              # only cache traffic. If the cache server (gha-cache-server, this
+              # namespace) is down or unreachable, job completion reporting breaks and
+              # presents as the same never-leaves-in_progress-then-cancelled symptom a
+              # Cilium egress miss produces -- same signature, different cause. See
+              # ../../gha-cache-server/app/helmrelease.yaml's API_BASE_URL, which this
+              # value must stay byte-identical to, and
+              # .planning/phases/39-self-hosted-ci-on-the-talos-arc-cluster/39-CACHE-REVERT.md
+              # (garmin-ai-coach repo) for the one-edit revert if this needs to be
+              # backed out under pressure.
+              - name: CUSTOM_ACTIONS_RESULTS_URL
+                value: "http://gha-cache-server.arc-runners.svc.cluster.local:3000/"
             # D-01: an intentional departure from k8s-cluster-ci, which sets no
             # resources at all. talos02 is the only node with real headroom by
             # request (measured 4825m CPU / ~33 GiB free); a BestEffort Pod

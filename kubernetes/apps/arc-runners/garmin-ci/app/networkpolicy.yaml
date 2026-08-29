@@ -168,6 +168,21 @@ spec:
             - port: "443"
               protocol: TCP
 
+    # 39-06: egress to the on-cluster gha-cache-server (D-04), which
+    # CUSTOM_ACTIONS_RESULTS_URL on this Pod's runner container now points both cache and
+    # job-results traffic at. Uses toEndpoints, NOT toServices: the analog k8s-cluster-ci
+    # policy records live evidence that toServices silently dropped traffic on this
+    # cluster's Cilium version, hanging the client until its own timeout rather than
+    # connecting or being refused.
+    - toEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: gha-cache-server
+            io.kubernetes.pod.namespace: arc-runners
+      toPorts:
+        - ports:
+            - port: "3000"
+              protocol: TCP
+
     # Deliberately absent at this point: the rest of AWS (CloudFormation/S3/
     # ECR/Lambda/KMS in us-west-2, STS/Bedrock in us-east-1), OpenRouter.
     # These are added as each is observed dropped via Hubble, per D-13's

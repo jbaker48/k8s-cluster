@@ -42,7 +42,7 @@ spec:
           app:
             image:
               repository: ghcr.io/teslamate-org/teslamate
-              tag: main@sha256:6f2b5c12bc758a7497af49c858306bda06fefd97fb2109be91b3c4f8d107e020
+              tag: main@sha256:4f9e952a6f902cb9eecda6170fc3d127fe9efdbac9fdcbe064aecca3040bb60a
             envFrom:
               - secretRef:
                   name: teslamate-secret

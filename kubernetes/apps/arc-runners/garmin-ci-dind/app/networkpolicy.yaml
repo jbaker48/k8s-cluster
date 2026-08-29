@@ -66,7 +66,12 @@ spec:
     #    33236182232, job provider-decoupling) failed with `curl: (28) Failed to
     #    connect to pixi.sh port 443` -- garmin-ci-egress never needed this
     #    domain because design-system-gates (the only job proven there so far)
-    #    doesn't run pixi.
+    #    doesn't run pixi. Second Hubble-observed drop (39-02-PLAN.md Task 3
+    #    continuation, D-13, run 33243740268): the `Install pixi` step then
+    #    failed with EGRESS DENIED to 185.199.{108,109,110,111}.153:443, which
+    #    `cilium-dbg fqdn cache list` resolved to `pixi.prefix.dev.` -- the
+    #    actual package CDN pixi's installer talks to, distinct from `pixi.sh`
+    #    (the install-script host itself, already seeded).
     - toFQDNs:
         - matchName: "nodejs.org"
         - matchName: "registry.npmjs.org"
@@ -74,6 +79,7 @@ spec:
         - matchName: "files.pythonhosted.org"
         - matchName: "astral.sh"
         - matchName: "pixi.sh"
+        - matchName: "pixi.prefix.dev"
       toPorts:
         - ports:
             - port: "443"
@@ -102,8 +108,20 @@ spec:
     #    pulled by @aws-cdk/aws-lambda-python-alpha's Docker bundling in
     #    cdk-synth/app-plane-jest/provider-decoupling) and cdk-assets'
     #    ECR publish step.
+    #    Hubble/job-log-observed drop (39-02-PLAN.md Task 3 continuation, D-13,
+    #    run 33243740268): cdk-synth's `docker build --platform linux/arm64`
+    #    failed loading `public.ecr.aws/sam/build-python3.13`'s metadata with
+    #    `dial tcp 18.67.108.94:443: i/o timeout` against a presigned URL on
+    #    `d2glxqk2uabbnd.cloudfront.net` -- ECR Public fronts its actual blob
+    #    storage with a CloudFront distribution separate from the `public.ecr.aws`
+    #    API host itself, the same indirection pattern already seen for Docker
+    #    Hub's blob CDN above. Pinned to the one distribution hostname actually
+    #    observed; if a future run shows a different `d*.cloudfront.net` host,
+    #    broaden this from a fixed name to a pattern rather than re-litigating
+    #    the same root cause.
     - toFQDNs:
         - matchName: "public.ecr.aws"
+        - matchName: "d2glxqk2uabbnd.cloudfront.net"
         - matchPattern: "*.dkr.ecr.us-west-2.amazonaws.com"
         - matchName: "api.ecr.us-west-2.amazonaws.com"
       toPorts:

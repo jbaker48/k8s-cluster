@@ -1,0 +1,24 @@
+---
+# D-07: CephFS RWX with the filesystem storage driver, not S3 — this cluster has no MinIO and
+# no CephObjectStore, so the S3 driver would mean standing up a second new component inside this
+# plan. RWX because gha-cache-server runs strategy: Recreate with exactly one replica (see
+# helmrelease.yaml), so single-writer semantics for the SQLite metadata store hold regardless.
+#
+# Sizing: 20Gi, twice GitHub's own 10 GB/repo reference point (39-CONTEXT.md's stated yardstick),
+# combined with a 14-day cleanup window (CACHE_CLEANUP_OLDER_THAN_DAYS in helmrelease.yaml, shorter
+# than the upstream 90-day default because CI cache entries churn with every lockfile change and
+# this PVC is finite). This is the eviction policy CONTEXT.md's discretion note leaves open — the
+# next maintainer should size this against observed usage in du -sh /data/cache rather than
+# re-deriving the number from first principles.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: gha-cache-server
+  namespace: arc-runners
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 20Gi
+  storageClassName: ceph-filesystem

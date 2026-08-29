@@ -209,10 +209,28 @@
       // 0.14.2 wedges the AutoscalingRunnerSet permanently in phase Outdated,
       // taking all self-hosted CI down silently. See upstream #4595/#4596/#4600
       // and .planning/debug/resolved/arc-k8s-cluster-ci-no-listener.md.
+      //
+      // 39-06: garmin-ci now runs a FORKED runner image
+      // (ghcr.io/falcondev-oss/actions-runner, pinned by tag AND @sha256 digest
+      // per the operator's blocking-checkpoint "adopt-pinned-by-digest" ruling --
+      // see garmin-ci/app/helmrelease.yaml and 39-06-SUMMARY.md in the
+      // garmin-ai-coach repo). An untracked pin here is the exact same failure
+      // class that already took CI down once for the stock image (the incident
+      // this customManager was created to prevent) -- so the second matchStrings
+      // entry below captures BOTH currentValue and currentDigest, keeping the
+      // digest in lockstep with the tag on every bump rather than leaving it to
+      // silently drift out of sync with a newer tag string (which would be a
+      // pin that LOOKS current in the diff but still resolves the old image,
+      // since a digest is authoritative over its accompanying tag). The
+      // pre-existing stock-runner entry is left unchanged below: it is
+      // currently a live matcher against no file in this repo now that
+      // garmin-ci has moved to the fork, kept in case a future scale set
+      // reverts to the stock image (39-CACHE-REVERT.md's D-14 escape hatch).
       "description": ["ARC runner image pinned inside Flux HelmRelease inline values"],
       "fileMatch": ["(^|/)kubernetes/apps/arc-runners/.+\\.ya?ml(?:\\.j2)?$"],
       "matchStrings": [
-        "image:\\s+(?<depName>ghcr\\.io/actions/actions-runner):(?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)"
+        "image:\\s+(?<depName>ghcr\\.io/actions/actions-runner):(?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)",
+        "image:\\s+(?<depName>ghcr\\.io/falcondev-oss/actions-runner):(?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)@(?<currentDigest>sha256:[a-f0-9]+)"
       ],
       "datasourceTemplate": "docker",
       "versioningTemplate": "semver"

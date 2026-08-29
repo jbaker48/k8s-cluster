@@ -1,0 +1,125 @@
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: garmin-ci-dind-egress
+  namespace: arc-runners
+spec:
+  # SCOPE: only selects ephemeral per-job runner Pods (workload:
+  # garmin-ci-dind-runner, set via helmrelease.yaml template.metadata.labels --
+  # applies solely to the Pod template for jobs, not the chart's other
+  # resources). The scale-set's persistent listener Pod
+  # (garmin-ci-dind-<hash>-listener, which polls GitHub for job assignments)
+  # runs in the arc-systems namespace under different labels and is therefore
+  # NOT covered by this policy -- it never executes PR-controlled workflow
+  # code, unlike the ephemeral runner Pods this policy restricts (matches
+  # garmin-ci-egress's own scope boundary and T-39-10 in this plan's threat
+  # model). endpointSelector selects the Pod, not a container, so the
+  # privileged dind sidecar's own egress is covered by this same policy too.
+  endpointSelector:
+    matchLabels:
+      workload: garmin-ci-dind-runner
+  egress:
+    # 1. DNS resolution - required before toFQDNs can match anything
+    - toEndpoints:
+        - matchLabels:
+            k8s-app: kube-dns
+            io.kubernetes.pod.namespace: kube-system
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+          rules:
+            dns:
+              - matchPattern: "*"
+
+    # 2. GitHub Actions control-plane endpoints (registration, job pickup,
+    #    checkout, log/result upload) -- carried from garmin-ci-egress as it
+    #    stands after 39-01, whose own comments record the incidents behind
+    #    the last two entries: release-assets.githubusercontent.com
+    #    (curl-download redirect target) and
+    #    productionresultssa*.blob.core.windows.net (the Results-service
+    #    upload backend; without it the job's steps can pass but the run
+    #    never leaves in_progress and eventually reports cancelled -- Risk 1
+    #    in 39-CONTEXT.md).
+    - toFQDNs:
+        - matchName: "github.com"
+        - matchName: "api.github.com"
+        - matchName: "codeload.github.com"
+        - matchPattern: "*.actions.githubusercontent.com"
+        - matchName: "objects.githubusercontent.com"
+        - matchName: "release-assets.githubusercontent.com"
+        - matchPattern: "productionresultssa*.blob.core.windows.net"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+
+    # 3. Toolchain and package registries (Risk 6, 39-CONTEXT.md): the ARC
+    #    runner image has no preinstalled Node or Python and no hosted tool
+    #    cache, so setup-node/npm re-download on every job. provider-decoupling
+    #    also runs pixi install; cdk-synth/app-plane-jest run npm ci in infra/.
+    - toFQDNs:
+        - matchName: "nodejs.org"
+        - matchName: "registry.npmjs.org"
+        - matchName: "pypi.org"
+        - matchName: "files.pythonhosted.org"
+        - matchName: "astral.sh"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+
+    # 4. Docker Hub image pulls performed inside the job by `docker build`
+    #    against coach/Dockerfile.base (provider-decoupling's deployed-artefact
+    #    quarantine check exercises the same infra toolchain path).
+    - toFQDNs:
+        - matchName: "registry-1.docker.io"
+        - matchName: "auth.docker.io"
+        - matchName: "production.cloudflare.docker.com"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+
+    # 5. CDK's bundling base images (public.ecr.aws/sam/build-python3.13,
+    #    pulled by @aws-cdk/aws-lambda-python-alpha's Docker bundling in
+    #    cdk-synth/app-plane-jest/provider-decoupling) and cdk-assets'
+    #    ECR publish step.
+    - toFQDNs:
+        - matchName: "public.ecr.aws"
+        - matchPattern: "*.dkr.ecr.us-west-2.amazonaws.com"
+        - matchName: "api.ecr.us-west-2.amazonaws.com"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+
+    # 6. GitHub Container Registry pulls from inside the job (the runner and
+    #    init-dind-externals images themselves are pulled by the kubelet, not
+    #    from inside the job, but a job step may also pull ghcr.io images).
+    - toFQDNs:
+        - matchName: "ghcr.io"
+        - matchName: "pkg-containers.githubusercontent.com"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+
+    # 7. `cdk synth`/`cdk deploy` (cdk-synth job) and the OIDC role assumption
+    #    these jobs already perform against us-west-2.
+    - toFQDNs:
+        - matchName: "cloudformation.us-west-2.amazonaws.com"
+        - matchName: "sts.us-west-2.amazonaws.com"
+        - matchName: "s3.us-west-2.amazonaws.com"
+        - matchPattern: "*.s3.us-west-2.amazonaws.com"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+
+    # These are seeds for Task 3's Hubble-observed iteration (D-13), not a
+    # finished list -- extend only from an observed DROPPED flow, per
+    # garmin-ci-egress's own precedent.

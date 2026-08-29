@@ -1,0 +1,87 @@
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: garmin-ci-egress
+  namespace: arc-runners
+spec:
+  # SCOPE: only selects ephemeral per-job runner Pods (workload:
+  # garmin-ci-runner, set via helmrelease.yaml template.metadata.labels --
+  # applies solely to the Pod template for jobs, not the chart's other
+  # resources). The scale-set's persistent listener Pod
+  # (garmin-ci-<hash>-listener, which polls GitHub for job assignments) runs
+  # in the arc-systems namespace under different labels and is therefore NOT
+  # covered by this policy -- it never executes PR-controlled workflow code,
+  # unlike the ephemeral runner Pods this policy restricts (matches
+  # k8s-cluster-ci-egress's own scope boundary and T-39-01 in this plan's
+  # threat model).
+  endpointSelector:
+    matchLabels:
+      workload: garmin-ci-runner
+  egress:
+    # 1. DNS resolution - required before toFQDNs can match anything
+    - toEndpoints:
+        - matchLabels:
+            k8s-app: kube-dns
+            io.kubernetes.pod.namespace: kube-system
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+          rules:
+            dns:
+              - matchPattern: "*"
+
+    # 2. GitHub Actions control-plane endpoints (registration, job pickup,
+    #    checkout, log/result upload) -- carried from k8s-cluster-ci-egress,
+    #    whose own comments record the incidents behind the last two entries:
+    #    release-assets.githubusercontent.com (curl-download redirect target,
+    #    04-01-PLAN.md Task 2) and productionresultssa*.blob.core.windows.net
+    #    (the Results-service upload backend; without it the job's test step
+    #    passes in 1-2s but the run never leaves in_progress and eventually
+    #    reports cancelled -- Risk 1 in 39-CONTEXT.md). Narrowed to the
+    #    observed shard prefix rather than the bare *.blob.core.windows.net
+    #    suffix, which would permit egress to any Azure Storage account
+    #    (attacker-controlled ones included) under that shared multi-tenant
+    #    domain, not just GitHub's own backend -- same standard the analog
+    #    applies.
+    - toFQDNs:
+        - matchName: "github.com"
+        - matchName: "api.github.com"
+        - matchName: "codeload.github.com"
+        - matchPattern: "*.actions.githubusercontent.com"
+        - matchName: "objects.githubusercontent.com"
+        - matchName: "release-assets.githubusercontent.com"
+        - matchPattern: "productionresultssa*.blob.core.windows.net"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+
+    # 3. Toolchain and package registries (Risk 6, 39-CONTEXT.md): the ARC
+    #    runner image has no preinstalled Node or Python and no hosted tool
+    #    cache, so setup-node/setup-uv and npm/pip re-download on every job.
+    #    This tracer task exercises only the Node/npm path
+    #    (design-system-gates runs actions/setup-node + npm ci); pypi.org /
+    #    files.pythonhosted.org / astral.sh are seeded now for the uv-based
+    #    jobs later plans convert, per the action's explicit instruction to
+    #    seed all five together rather than add Python endpoints piecemeal.
+    - toFQDNs:
+        - matchName: "nodejs.org"
+        - matchName: "registry.npmjs.org"
+        - matchName: "pypi.org"
+        - matchName: "files.pythonhosted.org"
+        - matchName: "astral.sh"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+
+    # Deliberately absent at this point: AWS (STS/CloudFormation/S3/ECR/
+    # Lambda in us-west-2 and us-east-1), Bedrock, OpenRouter, pixi and
+    # Playwright download endpoints. The design-system-gates tracer job
+    # needs none of them -- these are added in 39-03 as each is observed
+    # dropped via Hubble, per D-13's Hubble-observed iteration, not
+    # allowlisted speculatively.

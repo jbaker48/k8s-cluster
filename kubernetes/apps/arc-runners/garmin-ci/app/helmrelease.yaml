@@ -1,0 +1,71 @@
+---
+# yaml-language-server: $schema=https://raw.githubusercontent.com/fluxcd-community/flux2-schemas/main/helmrelease-helm-v2.json
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: garmin-ci
+  namespace: arc-runners
+spec:
+  chartRef:
+    kind: OCIRepository
+    name: gha-runner-scale-set-garmin-ci
+    namespace: arc-runners
+  interval: 1h
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    cleanupOnFail: true
+    remediation:
+      strategy: rollback
+      retries: 3
+  dependsOn:
+    - name: actions-runner-controller
+      namespace: arc-systems
+  values:
+    githubConfigUrl: "https://github.com/jbaker48/garmin-ai-coach"
+    githubConfigSecret: arc-github-secret-garmin-ci
+    minRunners: 0
+    maxRunners: 4
+    controllerServiceAccount:
+      namespace: arc-systems
+      name: actions-runner-controller-gha-rs-controller
+    template:
+      metadata:
+        labels:
+          workload: garmin-ci-runner
+      spec:
+        serviceAccountName: garmin-ci
+        automountServiceAccountToken: false
+        containers:
+          # GitHub's Actions service enforces a rolling MINIMUM runner version.
+          # When the pinned runner falls below it the service rejects the runner
+          # and the container exits with code 7 (RunnerVersionDeprecated). ARC
+          # 0.14.2 maps that to EphemeralRunner -> EphemeralRunnerSet ->
+          # AutoscalingRunnerSet status.phase=Outdated, which is an ABSORBING
+          # state: it deletes the listener, the ephemeral runner sets AND the
+          # GitHub-side runner scale set, then never recreates anything and
+          # never requeues (autoscalingrunnerset_controller.go L184/L246/L261).
+          # CI is then silently and permanently dead, surviving controller
+          # restarts. See upstream actions/actions-runner-controller #4595,
+          # #4596 and #4600.
+          # KEEP THIS PINNED AT OR NEAR THE LATEST actions/runner RELEASE.
+          # Tracked by the "ARC runner image" customManager in
+          # .github/renovate.json5.
+          - name: runner
+            image: ghcr.io/actions/actions-runner:2.336.0
+            imagePullPolicy: IfNotPresent
+            command: ["/home/runner/run.sh"]
+            # D-01: an intentional departure from k8s-cluster-ci, which sets no
+            # resources at all. talos02 is the only node with real headroom by
+            # request (measured 4825m CPU / ~33 GiB free); a BestEffort Pod
+            # would be scheduled onto talos01/talos03, where headroom is ~0,
+            # and be the first evicted under pressure -- presenting as random
+            # CI failure. No CPU limit is set deliberately so jobs can burst
+            # into idle CPU once scheduled (Burstable QoS).
+            resources:
+              requests:
+                cpu: 500m
+                memory: 4Gi
+              limits:
+                memory: 8Gi

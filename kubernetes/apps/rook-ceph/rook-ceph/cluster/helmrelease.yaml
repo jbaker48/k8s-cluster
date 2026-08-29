@@ -99,7 +99,7 @@ spec:
               - name: "/dev/sda"
           - name: talos03
             devices:
-              - name: "/dev/sdb"
+              - name: "/dev/sda"
       placement:
         mgr: &placement
           nodeAffinity:

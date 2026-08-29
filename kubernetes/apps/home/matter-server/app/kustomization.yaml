@@ -5,6 +5,5 @@ kind: Kustomization
 namespace: home
 resources:
   - ./helmrelease.yaml
-  - ./nad.yaml
   - ./ocirepository.yaml
   - ./pvc.yaml

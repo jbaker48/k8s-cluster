@@ -19,8 +19,6 @@ spec:
       retries: 3
   values:
     defaultPodOptions:
-      annotations:
-        k8s.v1.cni.cncf.io/networks: '[{"name":"multus-iot","ips":["192.168.10.200/24"]}]'
       securityContext:
         # Matter server requires root to manage its Bluetooth/IP stack
         runAsNonRoot: false

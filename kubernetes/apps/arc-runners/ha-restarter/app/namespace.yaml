@@ -5,3 +5,15 @@ metadata:
   name: arc-runners
   labels:
     kustomize.toolkit.fluxcd.io/prune: disabled
+    # Kept byte-identical to ../../namespace.yaml's labels (39-02-PLAN.md Task 3, Rule 3
+    # deviation): this file and that one both declare Namespace/arc-runners under the SAME
+    # Flux field manager ("kustomize-controller"), and Server-Side Apply resolves conflicting
+    # declarations of the same object by last-applied-wins per field -- whichever Kustomization
+    # reconciles last silently prunes any label the other one added but it doesn't also declare.
+    # Discovered live: this file's absence of the pod-security labels below caused
+    # ha-restarter's 30-minute reconcile loop to intermittently strip them, flapping the
+    # garmin-ci-dind privileged-Pod admission gate on and off. See garmin-ai-coach
+    # 39-02-SUMMARY.md for the full incident writeup.
+    pod-security.kubernetes.io/enforce: privileged
+    pod-security.kubernetes.io/audit: privileged
+    pod-security.kubernetes.io/warn: privileged

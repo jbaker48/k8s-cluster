@@ -84,8 +84,15 @@ spec:
     # 270s curl timeout before failing with "Failed to connect to pixi.sh
     # port 443" (run 33251635164) -- the exact silent-hang shape Risk 1
     # describes, confirmed by the step's own error output naming the host.
+    # pixi.sh/install.sh itself redirects to pixi.prefix.dev to fetch the
+    # actual binary -- confirmed by "Install pixi"'s NEXT failure once
+    # pixi.sh alone was reachable (run 33252239155): "Failed to connect to
+    # pixi.prefix.dev port 443". garmin-ci-dind's own networkpolicy.yaml
+    # (39-02, PR #1102) already carries this exact same host for the
+    # identical reason on the privileged scale set.
     - toFQDNs:
         - matchName: "pixi.sh"
+        - matchName: "pixi.prefix.dev"
       toPorts:
         - ports:
             - port: "443"

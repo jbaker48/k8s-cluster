@@ -90,9 +90,16 @@ spec:
     # pixi.prefix.dev port 443". garmin-ci-dind's own networkpolicy.yaml
     # (39-02, PR #1102) already carries this exact same host for the
     # identical reason on the privileged scale set.
+    # `pixi install -q` itself resolves conda-forge packages from
+    # conda.anaconda.org -- confirmed by "Install dependencies"'s failure
+    # once "Install pixi" succeeded (run 33253535591): "failed to fetch
+    # pip-25.2-...conda ... conda.anaconda.org/conda-forge/...". Same host
+    # 39-02 (PR #1103) already had to add for the privileged scale set's
+    # identical pixi install path.
     - toFQDNs:
         - matchName: "pixi.sh"
         - matchName: "pixi.prefix.dev"
+        - matchName: "conda.anaconda.org"
       toPorts:
         - ports:
             - port: "443"

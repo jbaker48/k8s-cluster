@@ -83,6 +83,20 @@ spec:
     defaultPodOptions:
       nodeSelector:
         intel.feature.node.kubernetes.io/gpu: "true"
+      # Mirrors Plex's rule. Plex's anti-affinity only stops Plex being placed
+      # on Frigate's node -- it does not stop Frigate moving onto Plex's node,
+      # so a Frigate reschedule could re-stack them and both would contend for
+      # the same iGPU, stalling Plex transcodes.
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchExpressions:
+                  - key: app.kubernetes.io/name
+                    operator: In
+                    values:
+                      - plex
+              topologyKey: "kubernetes.io/hostname"
     service:
       app:
         controller:  *app

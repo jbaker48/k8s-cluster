@@ -52,3 +52,20 @@ spec:
         - ports:
             - port: "443"
               protocol: TCP
+
+    # 39-06 Task 3: routes/[...path].ts proxies any twirp call this server does not implement
+    # itself (e.g. ArtifactService, used by actions/upload-artifact) straight through to
+    # DEFAULT_ACTIONS_RESULTS_URL, which defaults to this host -- confirmed live: the
+    # coach-conversations-smoke job's "Upload smoke evidence" step 502'd with a Connect Timeout
+    # to results-receiver.actions.githubusercontent.com before this entry was added. Job
+    # RESULTS/completion reporting itself was observed working without this entry (multiple
+    # garmin-ci jobs reached real terminal conclusions), so this gap is scoped to the
+    # artifact-proxy path specifically, not the core results-reporting path Risk 4 warns about --
+    # but it is the same catch-all proxy mechanism, so added defensively rather than left
+    # half-fixed.
+    - toFQDNs:
+        - matchName: "results-receiver.actions.githubusercontent.com"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP

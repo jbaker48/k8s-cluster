@@ -214,7 +214,10 @@ spec:
             resources:
               requests:
                 cpu: 100m
-                memory: 1Gi
+                # CephFS holds <1MiB of metadata here and the MDS uses ~29Mi.
+                # OSD requests are deliberately left at 2Gi -- already at the
+                # low end of Ceph's guidance, so not a safe place to reclaim.
+                memory: 512Mi
               limits:
                 memory: 4Gi
         storageClass:

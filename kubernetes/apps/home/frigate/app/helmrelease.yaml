@@ -38,7 +38,9 @@ spec:
             resources:
               requests:
                 cpu: 800m
-                memory: 2Gi
+                # Observed steady-state is ~3.8Gi; a 2Gi request under-accounted
+                # for Frigate at scheduling time and let it overcommit its node.
+                memory: 4Gi
                 gpu.intel.com/i915: "1"
               limits:
                 memory: 6Gi

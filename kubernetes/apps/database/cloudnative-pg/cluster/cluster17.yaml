@@ -37,6 +37,10 @@ spec:
   resources:
     requests:
       cpu: 500m
+      # Without an explicit request, Kubernetes copies the 4Gi limit into the
+      # request, reserving 12Gi across three instances against ~400Mi actual
+      # use. Headroom to burst is preserved by the unchanged 4Gi limit.
+      memory: 1Gi
     limits:
       memory: 4Gi
   monitoring:

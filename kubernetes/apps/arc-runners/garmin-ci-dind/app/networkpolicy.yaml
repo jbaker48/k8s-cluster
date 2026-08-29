@@ -61,12 +61,19 @@ spec:
     #    runner image has no preinstalled Node or Python and no hosted tool
     #    cache, so setup-node/npm re-download on every job. provider-decoupling
     #    also runs pixi install; cdk-synth/app-plane-jest run npm ci in infra/.
+    #    Hubble/job-log-observed drop (D-13): provider-decoupling's `curl -fsSL
+    #    https://pixi.sh/install.sh | bash` step (39-02-PLAN.md Task 3, run
+    #    33236182232, job provider-decoupling) failed with `curl: (28) Failed to
+    #    connect to pixi.sh port 443` -- garmin-ci-egress never needed this
+    #    domain because design-system-gates (the only job proven there so far)
+    #    doesn't run pixi.
     - toFQDNs:
         - matchName: "nodejs.org"
         - matchName: "registry.npmjs.org"
         - matchName: "pypi.org"
         - matchName: "files.pythonhosted.org"
         - matchName: "astral.sh"
+        - matchName: "pixi.sh"
       toPorts:
         - ports:
             - port: "443"

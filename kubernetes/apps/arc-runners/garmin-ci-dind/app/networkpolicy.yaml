@@ -75,10 +75,17 @@ spec:
     # 4. Docker Hub image pulls performed inside the job by `docker build`
     #    against coach/Dockerfile.base (provider-decoupling's deployed-artefact
     #    quarantine check exercises the same infra toolchain path).
+    #    Hubble-observed drop (39-02-PLAN.md Task 3, D-13): docker/setup-qemu-action's
+    #    `docker pull docker.io/tonistiigi/binfmt` blob layer resolved to
+    #    production.cloudfront.docker.com, not production.cloudflare.docker.com --
+    #    Docker Hub load-balances its blob CDN across both, and only the Cloudflare
+    #    backend was in the original seed. Job app-plane-jest (run 33236182232) failed
+    #    with `dial tcp 108.158.20.63:443: i/o timeout` until this entry was added.
     - toFQDNs:
         - matchName: "registry-1.docker.io"
         - matchName: "auth.docker.io"
         - matchName: "production.cloudflare.docker.com"
+        - matchName: "production.cloudfront.docker.com"
       toPorts:
         - ports:
             - port: "443"

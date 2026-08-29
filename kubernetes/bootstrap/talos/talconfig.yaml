@@ -122,6 +122,7 @@ controlPlane:
         - net.ifnames=1 # Enable predictable NIC naming
       systemExtensions:
         officialExtensions:
+            - siderolabs/binfmt-misc # Register QEMU as the arm64 interpreter for privileged dind CI builds (39-02)
             - siderolabs/gasket-driver
             - siderolabs/i915
             - siderolabs/intel-ucode

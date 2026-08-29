@@ -7,3 +7,4 @@ resources:
   - ./ha-restarter/ks.yaml
   - ./k8s-cluster-ci/ks.yaml
   - ./garmin-ci/ks.yaml
+  - ./garmin-ci-dind/ks.yaml

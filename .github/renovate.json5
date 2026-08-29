@@ -209,16 +209,10 @@
       // 0.14.2 wedges the AutoscalingRunnerSet permanently in phase Outdated,
       // taking all self-hosted CI down silently. See upstream #4595/#4596/#4600
       // and .planning/debug/resolved/arc-k8s-cluster-ci-no-listener.md.
-      // Second matchStrings entry (39-02) widens this same customManager to the
-      // garmin-ci-dind scale set's docker:<major>-dind sidecar pin -- the same
-      // "inline HelmRelease values, invisible to the other managers" blind spot
-      // applies to it, and an untracked pin here is the identical failure class
-      // that caused the outage this customManager exists to prevent.
       "description": ["ARC runner image pinned inside Flux HelmRelease inline values"],
       "fileMatch": ["(^|/)kubernetes/apps/arc-runners/.+\\.ya?ml(?:\\.j2)?$"],
       "matchStrings": [
-        "image:\\s+(?<depName>ghcr\\.io/actions/actions-runner):(?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)",
-        "image:\\s+(?<depName>docker):(?<currentValue>[0-9]+-dind)"
+        "image:\\s+(?<depName>ghcr\\.io/actions/actions-runner):(?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)"
       ],
       "datasourceTemplate": "docker",
       "versioningTemplate": "semver"

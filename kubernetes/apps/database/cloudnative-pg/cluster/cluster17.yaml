@@ -16,6 +16,12 @@ spec:
     name: cloudnative-pg-secret
   enableSuperuserAccess: true
   affinity:
+    # One instance per node: openebs-hostpath is node-local storage, and
+    # CNPG's default `preferred` anti-affinity let both instances land on
+    # talos02 -- leaving no node-level redundancy after a disk replacement.
+    enablePodAntiAffinity: true
+    topologyKey: kubernetes.io/hostname
+    podAntiAffinityType: required
     tolerations:
       - key: dedicated
         operator: Equal

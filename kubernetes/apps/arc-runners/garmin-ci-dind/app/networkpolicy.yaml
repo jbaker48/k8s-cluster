@@ -72,6 +72,14 @@ spec:
     #    `cilium-dbg fqdn cache list` resolved to `pixi.prefix.dev.` -- the
     #    actual package CDN pixi's installer talks to, distinct from `pixi.sh`
     #    (the install-script host itself, already seeded).
+    #    Job-log-observed drop (39-02-PLAN.md Task 3 second continuation, D-13,
+    #    run 33245210903): provider-decoupling's `pixi install -q` step failed
+    #    after ~4 minutes with `failed to fetch libgcc-15.2.0-...conda ...
+    #    tcp connect error ... Operation timed out` against
+    #    conda.anaconda.org -- pixi resolves its conda-forge packages from
+    #    Anaconda's own CDN, a separate host from pixi.prefix.dev (PyPI-style
+    #    package index, already seeded) and pixi.sh (the installer script
+    #    host, already seeded).
     - toFQDNs:
         - matchName: "nodejs.org"
         - matchName: "registry.npmjs.org"
@@ -80,6 +88,23 @@ spec:
         - matchName: "astral.sh"
         - matchName: "pixi.sh"
         - matchName: "pixi.prefix.dev"
+        - matchName: "conda.anaconda.org"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+
+    # 3b. Sigstore TUF root, used by Docker BuildKit's default supply-chain
+    #     attestation (SBOM/provenance) fetch when building images via
+    #     `docker buildx build` -- triggered by cdk-synth/app-plane-jest's
+    #     `docker build --platform linux/arm64` bundling steps, not by any
+    #     signature verification this repo's own workflows perform.
+    #     Hubble-observed drop (39-02-PLAN.md Task 3 second continuation,
+    #     D-13, run 33245210903): repeated EGRESS DENIED to
+    #     tuf-repo-cdn.sigstore.dev:443 from the cdk-synth runner Pod during
+    #     `cdk synth across every CDK app that exists`.
+    - toFQDNs:
+        - matchName: "tuf-repo-cdn.sigstore.dev"
       toPorts:
         - ports:
             - port: "443"

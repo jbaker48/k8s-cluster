@@ -125,6 +125,21 @@ spec:
             - port: "443"
               protocol: TCP
 
+    # 39-03 Task 3: `web-a11y`'s "Install Playwright's Chromium browser" step
+    # got past apt (previous entry) and then hung repeatedly re-attempting
+    # `https://cdn.playwright.dev/builds/cft/.../chrome-linux64.zip` (run
+    # 33252239155's own step log names the URL directly) until Playwright's
+    # own download retry budget was exhausted with "Failed to download
+    # Chrome for Testing". Needed by every job that runs
+    # `playwright install --with-deps chromium` (web-a11y and its two
+    # authenticated/onboarding siblings).
+    - toFQDNs:
+        - matchName: "cdn.playwright.dev"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+
     # Deliberately absent at this point: the rest of AWS (CloudFormation/S3/
     # ECR/Lambda/KMS in us-west-2, STS/Bedrock in us-east-1), OpenRouter.
     # These are added as each is observed dropped via Hubble, per D-13's

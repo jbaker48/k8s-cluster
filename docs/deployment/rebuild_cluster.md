@@ -23,17 +23,20 @@ All tools are managed by mise. Install them with:
 ```bash
 mise trust
 mise install
-mise run deps
 ```
 
-Required tools (installed automatically):
-- `kubectl` - Kubernetes CLI
-- `talosctl` - Talos Linux CLI
-- `talhelper` - Talos configuration generator
-- `flux` - Flux CD CLI
-- `helmfile` - Helm deployment manager
-- `sops` - Secret encryption
-- `age` - Encryption key management
+Every tool the tasks call is declared in `.mise.toml`, including `kubectl`,
+`talosctl`, `talhelper`, `flux`, `helm`, `helmfile`, `kustomize`, `sops`,
+`age`, `yq`, `jq`, `task`, `kubeconform`, `yamllint`, `minijinja-cli`,
+`stern`, `pre-commit` and `cloudflared`.
+
+Confirm they resolve through mise and not a system package manager, since a
+Homebrew binary earlier in `PATH` will shadow the pinned version:
+
+```bash
+mise doctor
+mise which talhelper
+```
 
 ### Required Files
 
@@ -124,7 +127,7 @@ If Rook-Ceph resources are stuck during teardown:
 
 ```bash
 # Remove finalizers from stuck resources
-task rook-ceph:remove-finalizers
+task rook:remove-finalizers
 ```
 
 ### Wiping Ceph Data on Nodes
@@ -260,7 +263,7 @@ Rook-Ceph cluster initialization takes time. Monitor progress:
 flux get kustomization rook-ceph-cluster -n flux-system
 
 # Once toolbox is running, check Ceph health
-task rook-ceph:status
+task rook:status
 
 # Verify storage classes exist
 kubectl get storageclasses
@@ -364,10 +367,10 @@ kubectl -n external-secrets logs -l app.kubernetes.io/name=external-secrets
 
 ```bash
 # Detailed health
-task rook-ceph:health
+task rook:health
 
 # OSD status
-task rook-ceph:osd-status
+task rook:osd-status
 
 # Check operator logs
 kubectl -n rook-ceph logs -l app=rook-ceph-operator --tail=100
@@ -384,7 +387,7 @@ If resources won't delete during teardown:
 
 ```bash
 # Rook-Ceph resources
-task rook-ceph:remove-finalizers
+task rook:remove-finalizers
 
 # Generic resource (replace with actual resource)
 kubectl patch <resource> <name> -n <namespace> -p '{"metadata":{"finalizers":[]}}' --type=merge
@@ -526,7 +529,7 @@ kubectl get pods -A | grep -v Running
 task reconcile
 
 # Storage status
-task rook-ceph:status
+task rook:status
 
 # Unlock stuck VolSync repos
 task volsync:unlock
@@ -538,10 +541,15 @@ task volsync:unlock
 
 ### Scenario: Single Node Failure
 
-1. Replace/repair the physical node
-2. Boot with Talos installer
-3. Apply config: `task talos:apply-node IP=<node-ip>`
-4. Node will rejoin cluster automatically
+**See [rebuild_node.md](./rebuild_node.md) for the full procedure.** Rebuilding
+one node is not a scaled-down cluster rebuild — it has its own constraints:
+
+- All three nodes are etcd members, so a second node must never be wiped while
+  one is down, or the API becomes read-only and the node cannot rejoin.
+- `openebs-hostpath` data is node-local and is destroyed by a wipe. Ceph is
+  replicated and survives.
+- A rebuilt node needs its CloudNativePG instance replaced by hand before the
+  database will recover.
 
 ### Scenario: Complete Cluster Loss (Disaster Recovery)
 
@@ -557,7 +565,7 @@ task volsync:unlock
 If Ceph OSDs are lost but nodes are healthy:
 
 1. Delete the CephCluster: `kubectl delete cephcluster -n rook-ceph rook-ceph`
-2. Remove finalizers if stuck: `task rook-ceph:remove-finalizers`
+2. Remove finalizers if stuck: `task rook:remove-finalizers`
 3. Wipe OSD disks on each node
 4. Force Flux to recreate: `flux reconcile kustomization rook-ceph-cluster -n flux-system --force`
 5. Restore application data from VolSync backups

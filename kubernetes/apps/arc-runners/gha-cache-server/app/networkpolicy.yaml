@@ -22,9 +22,6 @@ spec:
             - port: "3000"
               protocol: TCP
   egress:
-    # DNS resolution only — the cache server has no outbound dependency of its own. Per Risk 4
-    # (39-CONTEXT.md), DEFAULT_ACTIONS_RESULTS_URL passthrough is only exercised if configured,
-    # which this plan does not do.
     - toEndpoints:
         - matchLabels:
             k8s-app: kube-dns
@@ -38,3 +35,20 @@ spec:
           rules:
             dns:
               - matchPattern: "*"
+
+    # 39-06 Task 3: this policy originally shipped DNS-only, on the stated assumption "it has no
+    # outbound dependency of its own" — WRONG, found live within minutes of the first real
+    # workflow run. Every CreateCacheEntry twirp call from a runner Pod 401'd with "Invalid
+    # token"; the cache server's own logs showed it trying and failing to verify the caller's
+    # GitHub Actions OIDC JWT against token.actions.githubusercontent.com's JWKS endpoint
+    # (`OIDC discovery failed ... Connect Timeout Error`) — this server validates every twirp
+    # request's bearer token itself (lib env ACTIONS_TOKEN_ISSUER/ACTIONS_TOKEN_JWKS_URL), it
+    # does not just proxy blindly. Without this host, no cache operation can ever succeed,
+    # regardless of anything upstream of it. D-13 pattern: added on live Hubble/log evidence,
+    # not speculatively.
+    - toFQDNs:
+        - matchName: "token.actions.githubusercontent.com"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP

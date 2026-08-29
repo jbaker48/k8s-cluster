@@ -79,9 +79,53 @@ spec:
             - port: "443"
               protocol: TCP
 
-    # Deliberately absent at this point: AWS (STS/CloudFormation/S3/ECR/
-    # Lambda in us-west-2 and us-east-1), Bedrock, OpenRouter, pixi and
-    # Playwright download endpoints. The design-system-gates tracer job
-    # needs none of them -- these are added in 39-03 as each is observed
-    # dropped via Hubble, per D-13's Hubble-observed iteration, not
-    # allowlisted speculatively.
+    # 39-03 Task 3: `lint-and-test`'s "Install pixi" step ran
+    # `curl -fsSL https://pixi.sh/install.sh | bash` and hung for the full
+    # 270s curl timeout before failing with "Failed to connect to pixi.sh
+    # port 443" (run 33251635164) -- the exact silent-hang shape Risk 1
+    # describes, confirmed by the step's own error output naming the host.
+    - toFQDNs:
+        - matchName: "pixi.sh"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+
+    # 39-03 Task 3: `web-a11y`'s "Install Playwright's Chromium browser" step
+    # (`npx playwright install --with-deps chromium`) runs `apt-get update`
+    # against every configured apt source, then fails to locate every
+    # browser-dependency package once the index fetch times out (run
+    # 33251635164) -- confirmed by the step's own apt error output naming
+    # all three hosts (archive.ubuntu.com/security.ubuntu.com for the
+    # package indices, ppa.launchpadcontent.net for the runner image's
+    # pre-configured git-core PPA source, refreshed by the same apt-get
+    # update call). Needed by web-a11y, web-a11y-authenticated and
+    # web-a11y-onboarding, all of which run `--with-deps chromium`.
+    - toFQDNs:
+        - matchName: "archive.ubuntu.com"
+        - matchName: "security.ubuntu.com"
+        - matchName: "ppa.launchpadcontent.net"
+      toPorts:
+        - ports:
+            - port: "80"
+              protocol: TCP
+            - port: "443"
+              protocol: TCP
+
+    # 39-03 Task 3: `evals`'s "Configure AWS credentials via OIDC" step
+    # (assumes vars.DEV_DEPLOY_ROLE_ARN in us-west-2) hung with no terminal
+    # error for over 10 minutes on run 33251635164 -- Hubble confirmed
+    # repeated DROPPED SYN packets from the runner Pod to 44.248.101.199:443,
+    # resolved via `cilium-dbg fqdn cache list` to sts.us-west-2.amazonaws.com.
+    # Needed by every job in this file that assumes DEV_DEPLOY_ROLE_ARN.
+    - toFQDNs:
+        - matchName: "sts.us-west-2.amazonaws.com"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+
+    # Deliberately absent at this point: the rest of AWS (CloudFormation/S3/
+    # ECR/Lambda/KMS in us-west-2, STS/Bedrock in us-east-1), OpenRouter.
+    # These are added as each is observed dropped via Hubble, per D-13's
+    # Hubble-observed iteration, not allowlisted speculatively.

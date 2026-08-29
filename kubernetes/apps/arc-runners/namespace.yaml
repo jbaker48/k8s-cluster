@@ -5,21 +5,20 @@ metadata:
   name: arc-runners
   labels:
     kustomize.toolkit.fluxcd.io/prune: disabled
-    # 39-02-PLAN.md Task 3 (Rule 3 deviation): garmin-ci-dind's `dind` sidecar sets
-    # securityContext.privileged: true and was rejected outright by the cluster's default
-    # `baseline` PodSecurity admission level (no namespace here previously opted out of it,
-    # because no workload in arc-runners had ever needed a privileged container before this
-    # plan) -- EphemeralRunner pods failed to create with "violates PodSecurity baseline:latest:
-    # privileged". Matches the exact precedent already established in this repo for the same
-    # problem: kubernetes/apps/rook-ceph/namespace.yaml sets the same three labels for its own
-    # privileged Ceph OSD pods. This raises the ceiling for every workload in arc-runners
-    # (garmin-ci, k8s-cluster-ci, ha-restarter too), not just garmin-ci-dind -- there is no
-    # narrower per-Pod PodSecurity exemption available without a validating-webhook layer this
-    # cluster does not run. D-DOCKER's blast-radius separation is enforced by the distinct
-    # scale sets/tokens/CiliumNetworkPolicies (T-39-08/T-39-10/T-39-11 in 39-02-PLAN.md's threat
-    # model), not by namespace-level PodSecurity, and T-39-09 (privileged-container escape) is
-    # already accepted at ASVS L1 for this private, single-owner repo -- so this label change
-    # does not weaken a control the threat model was relying on.
-    pod-security.kubernetes.io/enforce: privileged
-    pod-security.kubernetes.io/audit: privileged
-    pod-security.kubernetes.io/warn: privileged
+# PodSecurity: back to the cluster default `baseline` (2026-08-29). 39-02 raised this whole
+    # namespace to `privileged` for exactly one workload -- garmin-ci-dind's `dind` sidecar, which
+    # sets securityContext.privileged: true. That scale set is now retired (its arm64 builds could
+    # never work: Talos ships the binfmt_misc kernel module but never mounts it or registers QEMU,
+    # which is out of scope for the extension per siderolabs/talos#11472), so the exemption it
+    # required goes with it. Dropping these labels RESTORES a control rather than removing one:
+    # `baseline` admission refuses privileged containers outright, so D-DOCKER's "PR-authored code
+    # never gets a privileged container" is now enforced by the cluster itself, not only by the
+    # scale-set/token/CiliumNetworkPolicy separation. No remaining arc-runners workload
+    # (garmin-ci, k8s-cluster-ci, ha-restarter) declares privileged, hostPath or hostNetwork.
+    #
+    # KEEP THIS FILE'S LABEL SET BYTE-IDENTICAL TO THE OTHER arc-runners Namespace declaration
+    # (../../namespace.yaml <-> ha-restarter/app/namespace.yaml). Both declare Namespace/arc-runners
+    # under the same Flux field manager, and Server-Side Apply resolves conflicts last-applied-wins
+    # per field, so a label present in one and absent from the other gets silently stripped and
+    # re-added on every reconcile. That exact flapping was observed live under 39-02 -- see
+    # garmin-ai-coach 39-02-SUMMARY.md.

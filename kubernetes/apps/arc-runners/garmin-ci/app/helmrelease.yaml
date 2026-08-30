@@ -26,7 +26,22 @@ spec:
     githubConfigUrl: "https://github.com/jbaker48/garmin-ai-coach"
     githubConfigSecret: arc-github-secret-garmin-ci
     minRunners: 0
-    maxRunners: 4
+    # 39-07: maxRunners lowered from 4 to 2, derived from a live 2026-08-30T00:33Z node-headroom
+    # reading (see 39-EVIDENCE.md's "Criterion 5 -- sizing decision" section for the full reading
+    # and arithmetic). cap(node) = floor(min(free_cpu*0.8/500m, free_mem*0.8/4Gi)), 0.8 reserve so
+    # a saturated runner pool cannot make a node unschedulable for anything else:
+    #   talos01: free 5035m CPU / 14.43Gi mem -> memory-bound -> cap 2
+    #   talos02: free  595m CPU / 25.18Gi mem -> cpu-bound    -> cap 0 (already 92% CPU committed)
+    #   talos03: free  405m CPU /  3.57Gi mem -> cpu-bound    -> cap 0 (already 94% CPU committed)
+    #   sum = 2. Lower than the prior maxRunners: 4 -- capacity genuinely shrank since D-02's
+    #   untested starting figure; not raised to fit a wish, not left at the old number. The
+    #   gha-cache-server Pod's own 100m/256Mi request (talos01) is already subtracted into the
+    #   "free" figures above, since it was live and counted in the Allocated-resources reading
+    #   this arithmetic was taken from. No taint currently excludes talos02/talos03
+    #   (dedicated=frigate:NoSchedule is absent cluster-wide as of this reading) -- free capacity
+    #   is the binding constraint, not the toleration below. Re-derive this comment's numbers
+    #   before changing the value again; do not just bump the integer.
+    maxRunners: 2
     controllerServiceAccount:
       namespace: arc-systems
       name: actions-runner-controller-gha-rs-controller

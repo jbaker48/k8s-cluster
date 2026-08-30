@@ -139,6 +139,29 @@ spec:
             - port: "443"
               protocol: TCP
 
+    # 260830-te2: the `evals` job's "Decrypt held-out evaluation scenarios" step
+    # (garmin-ai-coach ci.yml, run 33302981308 on `main`, 2026-08-30) failed with:
+    #   failed to decrypt sops data key with AWS KMS: operation error KMS:
+    #   Decrypt, exceeded maximum number of attempts, 3, https response error
+    #   StatusCode: 0, RequestID: , request send failed, Post
+    #   "https://kms.us-west-2.amazonaws.com/"
+    # `StatusCode: 0` with `request send failed` is a connection failure, not an
+    # IAM deny -- the same D-13 class as the eight endpoints 39-03 added, of
+    # which sts.us-west-2.amazonaws.com (the entry directly above) was one.
+    # Needed by `sops` decrypting the held-out eval scenarios against
+    # arn:aws:kms:us-west-2:440882756298:key/b8836966-7d4d-4f05-8324-6fe98eca8664
+    # (alias/eval-held-out), via the AWS SDK for Go rather than the AWS CLI --
+    # which is why this job needs the KMS endpoint but not an `aws` binary.
+    # This is D-13's sanctioned Hubble-observed iteration finally firing for
+    # KMS, not speculative widening -- KMS was named explicitly in this file's
+    # own "deliberately absent" comment below, pending exactly this observation.
+    - toFQDNs:
+        - matchName: "kms.us-west-2.amazonaws.com"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+
     # 39-03 Task 3: `web-a11y`'s "Install Playwright's Chromium browser" step
     # got past apt (previous entry) and then hung repeatedly re-attempting
     # `https://cdn.playwright.dev/builds/cft/.../chrome-linux64.zip` (run
@@ -184,6 +207,6 @@ spec:
               protocol: TCP
 
     # Deliberately absent at this point: the rest of AWS (CloudFormation/S3/
-    # ECR/Lambda/KMS in us-west-2, STS/Bedrock in us-east-1), OpenRouter.
+    # ECR/Lambda in us-west-2, STS/Bedrock in us-east-1), OpenRouter.
     # These are added as each is observed dropped via Hubble, per D-13's
     # Hubble-observed iteration, not allowlisted speculatively.

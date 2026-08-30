@@ -139,6 +139,25 @@ spec:
             - port: "443"
               protocol: TCP
 
+    # 260830-te2 follow-up: `judged-evals-report-only` (garmin-ai-coach ci.yml, run
+    # 33310268416 on `main`, 2026-08-30) executed for the FIRST time -- it had been
+    # `skipped` behind `needs: evals` in every prior run, so this gap could not surface
+    # until the KMS entry below unblocked `evals`. Its "Assume management evaluation role"
+    # step retried `validateCredentials` 12 times over ~3 minutes and gave up with:
+    #   Credentials could not be loaded, please check your action inputs:
+    #   Could not load credentials from any providers
+    # That silent-hang-then-retry shape, with no IAM error, is the same D-13 connection
+    # signature as the sts.us-west-2 entry directly above -- not a deny. This job assumes
+    # MANAGEMENT_EVAL_ROLE_ARN with `aws-region: us-east-1`, so it needs STS in us-east-1,
+    # a different endpoint from the us-west-2 one already allowed. Shared by
+    # `judged-evals-blocking`, which uses the identical role and region.
+    - toFQDNs:
+        - matchName: "sts.us-east-1.amazonaws.com"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+
     # 260830-te2: the `evals` job's "Decrypt held-out evaluation scenarios" step
     # (garmin-ai-coach ci.yml, run 33302981308 on `main`, 2026-08-30) failed with:
     #   failed to decrypt sops data key with AWS KMS: operation error KMS:
@@ -207,6 +226,6 @@ spec:
               protocol: TCP
 
     # Deliberately absent at this point: the rest of AWS (CloudFormation/S3/
-    # ECR/Lambda in us-west-2, STS/Bedrock in us-east-1), OpenRouter.
+    # ECR/Lambda in us-west-2, Bedrock in us-east-1), OpenRouter.
     # These are added as each is observed dropped via Hubble, per D-13's
     # Hubble-observed iteration, not allowlisted speculatively.

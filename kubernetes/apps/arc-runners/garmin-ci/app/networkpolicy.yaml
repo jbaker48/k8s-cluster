@@ -158,6 +158,27 @@ spec:
             - port: "443"
               protocol: TCP
 
+    # 260830-te2 follow-up 2: `coach-conversations-smoke` (garmin-ai-coach ci.yml, run
+    # 33361142288 on `main`, 2026-08-31) reached its script for the first time -- the aws
+    # CLI/uuidgen fix landed in 65d6f132 -- and then died with:
+    #   FATAL: D-20 contract value app-plane/coach-api-url is empty.
+    #   Deploy CoachApiStack-dev (36-02-PLAN.md Task 1) before running this script.
+    # That message is MISLEADING and cost real debugging time. The parameter exists and is
+    # populated, and the assumed role is granted ssm:GetParameter on its exact ARN (verified
+    # live against platform-dev). `read_contract_value` in scripts/smoke-coach-conversations.sh
+    # wraps the call in `2>/dev/null || true`, so a CONNECTION failure is indistinguishable
+    # from an absent value. The tell is the clock: the step sat from 05:53:43 to 05:59:23 --
+    # ~5m40s -- before reporting "empty", which is a network timeout, not a lookup miss.
+    # Same D-13 class as the kms and sts entries above. Needed by every job here that reads a
+    # D-20 contract value on this scale set; `build-web` never hit it because it runs on the
+    # workstation runner, which has unrestricted egress.
+    - toFQDNs:
+        - matchName: "ssm.us-west-2.amazonaws.com"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+
     # 260830-te2: the `evals` job's "Decrypt held-out evaluation scenarios" step
     # (garmin-ai-coach ci.yml, run 33302981308 on `main`, 2026-08-30) failed with:
     #   failed to decrypt sops data key with AWS KMS: operation error KMS:

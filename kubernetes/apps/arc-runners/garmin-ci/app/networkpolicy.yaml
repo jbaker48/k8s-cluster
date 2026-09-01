@@ -246,6 +246,56 @@ spec:
             - port: "3000"
               protocol: TCP
 
+    # Phase 39 criterion-1 re-verification (garmin-ai-coach ci.yml, run 33361142288 on
+    # `main`, 2026-08-31). Two jobs died on this scale set from the same D-13 connection
+    # class, both confirmed from the raw job logs rather than inferred:
+    #
+    #   onboarding-canonical-domain-probe -- ran 07:42:39Z to 08:03:00Z and was CANCELLED at
+    #   its own 20-minute job budget (ci.yml timeout-minutes: 20). Its six setup steps all
+    #   succeeded, including "Configure AWS credentials via OIDC" (logged
+    #   `Authenticated as assumedRoleId AROAWNJVI7LFLPBEVSLRZ`), so this is NOT the
+    #   push-to-main OIDC trust-policy failure the phase record previously attributed it to.
+    #   The probe step itself logged at 07:58:34Z:
+    #     Could not connect to the endpoint URL: "https://cognito-idp.us-west-2.amazonaws.com/"
+    #   19m36s of the 20m budget went to TCP connect timeouts against a host not on this
+    #   allowlist. This is the same failure-advances-to-the-next-unlisted-host progression the
+    #   ssm.us-west-2 entry above records: attempt 1 died on ssm, that entry landed, attempt 2
+    #   then died on cognito-idp.
+    #
+    #   coach-conversations-smoke -- its non-vacuity guard logged at 07:43:51Z:
+    #     status=000 body=curl: (28) Connection timed out after 15001 milliseconds
+    #   against https://bb5icqb6ic.execute-api.us-west-2.amazonaws.com/dev. status=000 with
+    #   curl exit 28 is a connection failure, not an HTTP response -- the API Gateway data
+    #   plane is a distinct host from the ssm/sts control-plane endpoints already allowed.
+    #
+    # Scoped to the us-west-2 execute-api suffix rather than a bare wildcard: every API this
+    # repo calls is a regional API Gateway in that one region, and the narrower pattern keeps
+    # the same standard the productionresultssa* entry above applies to Azure Storage.
+    - toFQDNs:
+        - matchName: "cognito-idp.us-west-2.amazonaws.com"
+        - matchPattern: "*.execute-api.us-west-2.amazonaws.com"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+
+    # Seeded WITH the two observed entries above, and honestly marked as the one endpoint here
+    # NOT yet observed dropped. scripts/onboarding-canonical-write-domain-probe.sh calls
+    # `aws dynamodb query/update-item/get-item/put-item --region us-west-2` at lines 87, 96,
+    # 232, 238 and 283 -- all of them AFTER the cognito-idp calls at lines 81/102/107/110 that
+    # the run above died on, so the probe has never reached DynamoDB and Hubble cannot yet have
+    # observed the drop. Adding it now follows this file's own precedent for seeding a coherent
+    # set (section 3 seeds pypi.org/files.pythonhosted.org/astral.sh together, "rather than add
+    # Python endpoints piecemeal") and avoids burning another ~80-minute CI round trip to learn
+    # what the script's own source already states. If the next run proves it unnecessary, remove
+    # it -- D-13's iteration works in both directions.
+    - toFQDNs:
+        - matchName: "dynamodb.us-west-2.amazonaws.com"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+
     # Deliberately absent at this point: the rest of AWS (CloudFormation/S3/
     # ECR/Lambda in us-west-2, Bedrock in us-east-1), OpenRouter.
     # These are added as each is observed dropped via Hubble, per D-13's

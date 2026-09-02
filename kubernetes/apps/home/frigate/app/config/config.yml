@@ -126,6 +126,35 @@ go2rtc:
     backyard_substream:
       - rtsp://{FRIGATE_RTSP_USERNAME}:{FRIGATE_RTSP_PASSWORD}@{FRIGATE_BACKYARD_CAMERA_HOST}:554/Preview_01_sub
 
+    # --- Home Assistant live-view aliases ---------------------------------
+    # The Frigate HA integration derives each camera's stream_source as
+    #   rtsp://<frigate-host>:8554/<camera_name>
+    # so a stream must exist keyed on the camera's OWN name. Ours were keyed
+    # <name>_main / <name>_substream only, so that URL resolved to nothing and
+    # every Frigate camera advertised supported_features: 0 — no live view in
+    # HA, just a single still frame that then blanks. (The 2 Reolink cameras,
+    # which do not go through Frigate, correctly report 2.)
+    #
+    # These entries are PURELY ADDITIVE and cannot affect recording or
+    # detection: every camera's ffmpeg inputs below reference
+    # rtsp://127.0.0.1:8554/<name>_main and /<name>_substream explicitly, and
+    # those keys are untouched. Each alias re-serves the existing _main stream
+    # rather than opening a second connection to the camera.
+    zara_room:
+      - "ffmpeg:zara_main"
+    max_room:
+      - "ffmpeg:max_main"
+    playroom:
+      - "ffmpeg:playroom_main"
+    driveway:
+      - "ffmpeg:driveway_main"
+    garage:
+      - "ffmpeg:garage_main"
+    doorbell:
+      - "ffmpeg:doorbell_main"
+    backyard:
+      - "ffmpeg:backyard_main"
+
 cameras:
   zara_room:
     ffmpeg:

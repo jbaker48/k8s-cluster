@@ -322,7 +322,42 @@ spec:
             - port: "443"
               protocol: TCP
 
-    # Deliberately absent at this point: the rest of AWS (CloudFormation/S3/
-    # ECR/Lambda in us-west-2, Bedrock in us-east-1), OpenRouter.
+    # 2026-09-04, the second half of the same `smoke` progression. With `events`/`logs` allowed,
+    # `smoke` cleared step 6 and then took the PLAT-02 tenant-isolation and PLAT-03 agent-layer
+    # deny tests GREEN for the first time since 2026-08-29 -- both now pass. It advances to step
+    # 12, `tenant-lifecycle-smoke.sh`, and dies the same way:
+    #
+    #     Reading D-20 SSM contract values for env=dev region=us-west-2...
+    #     Connect timeout on endpoint URL: "https://cloudformation.us-west-2.amazonaws.com/"
+    #
+    # This entry seeds the endpoints the THREE remaining steps need, read from their sources
+    # rather than discovered one 80-minute CI round trip at a time -- the same reasoning the
+    # dynamodb entry and section 3's pypi/files.pythonhosted/astral trio already record, and the
+    # reason `logs` was seeded alongside `events` above and proved necessary:
+    #
+    #   tenant-lifecycle-smoke.sh -> cloudformation, cognito-idp, dynamodb, ssm, sts
+    #   agent-runtime-smoke.sh    -> bedrock-agentcore, bedrock-agentcore-control, cognito-idp,
+    #                                logs, ssm
+    #   coach-api-smoke.sh        -> apigatewayv2, cognito-idp, dynamodb, logs, ssm, sts
+    #
+    # Everything but `cloudformation`, `apigateway` and the two `bedrock-agentcore` hosts is
+    # already allowed above. `apigateway.us-west-2` is the CONTROL plane (apigatewayv2 describe
+    # calls); the DATA plane is `*.execute-api.us-west-2`, already present and a distinct host.
+    #
+    # `cloudformation` is the one OBSERVED dropped; the other three are seeded on their scripts'
+    # own source and are marked as such honestly. If a later run proves any unnecessary, remove
+    # it -- D-13's iteration works in both directions.
+    - toFQDNs:
+        - matchName: "cloudformation.us-west-2.amazonaws.com"
+        - matchName: "apigateway.us-west-2.amazonaws.com"
+        - matchName: "bedrock-agentcore.us-west-2.amazonaws.com"
+        - matchName: "bedrock-agentcore-control.us-west-2.amazonaws.com"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+
+    # Deliberately absent at this point: the rest of AWS (S3/ECR/Lambda in
+    # us-west-2, Bedrock in us-east-1), OpenRouter.
     # These are added as each is observed dropped via Hubble, per D-13's
     # Hubble-observed iteration, not allowlisted speculatively.

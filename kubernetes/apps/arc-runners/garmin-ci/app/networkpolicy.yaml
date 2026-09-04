@@ -296,6 +296,32 @@ spec:
             - port: "443"
               protocol: TCP
 
+    # 2026-09-04 -- the `smoke` job, OBSERVED dropped. Run 33861694930 logged at step 5 of 13:
+    #
+    #     Publishing smoke-test event: runId=33861694930 bus=platform-dev
+    #     Connect timeout on endpoint URL: "https://events.us-west-2.amazonaws.com/"
+    #
+    # This is the same failure-advances-to-the-next-unlisted-host progression the ssm and
+    # cognito-idp entries above record, and it matters more than one job: `smoke` dies at step 5
+    # of 13, so the EIGHT steps behind it stay unreached -- including the PLAT-02 and PLAT-03
+    # tenant-isolation deny tests, which have not run since 2026-08-29.
+    #
+    # BOTH endpoints are seeded together, deliberately. scripts/smoke-test.sh publishes an event
+    # and THEN polls CloudWatch Logs for its `SMOKE_OK` marker, so allowing only `events` moves
+    # the identical timeout into the polling loop and costs another ~80-minute CI round trip to
+    # learn what the script's own source already states. Same precedent as the dynamodb entry
+    # above and section 3's pypi/files.pythonhosted/astral trio: seed a coherent set rather than
+    # add endpoints piecemeal. `logs` is the one of the two not yet observed dropped, and is
+    # marked as such honestly -- if the next run proves it unnecessary, remove it; D-13's
+    # iteration works in both directions.
+    - toFQDNs:
+        - matchName: "events.us-west-2.amazonaws.com"
+        - matchName: "logs.us-west-2.amazonaws.com"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+
     # Deliberately absent at this point: the rest of AWS (CloudFormation/S3/
     # ECR/Lambda in us-west-2, Bedrock in us-east-1), OpenRouter.
     # These are added as each is observed dropped via Hubble, per D-13's

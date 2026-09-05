@@ -357,6 +357,36 @@ spec:
             - port: "443"
               protocol: TCP
 
+    # 2026-09-05, OBSERVED dropped, and the last host `smoke` needs. #1119's entry worked --
+    # `cloudformation` resolved and `tenant-lifecycle-smoke.sh` read every D-20 contract value
+    # (`tenant-lifecycle-stack-deployed=true`). It then hung five minutes and died with curl
+    # exit 28 at its own first real call:
+    #
+    #     --- Check 0: obtain a scoped admin access token via the control plane's machine client ---
+    #     (01:26:04 -> 01:31:08, no output)
+    #
+    # `scripts/tenant-lifecycle-smoke.sh:208` builds
+    # `https://${HOSTED_UI_DOMAIN}.auth.us-west-2.amazoncognito.com/oauth2/token`. That is the
+    # Cognito HOSTED UI / OAuth2 token endpoint, a genuinely different host from
+    # `cognito-idp.us-west-2.amazonaws.com` already allowed above -- the latter is the control
+    # API, this is the user-pool's own domain, and the `amazoncognito.com` suffix differs from
+    # `amazonaws.com` entirely.
+    #
+    # `matchPattern` rather than `matchName` because the domain prefix is a per-pool value read
+    # from SSM at run time (`440882756298-c803c34c...`), so no fixed name can match it. Scoped to
+    # the us-west-2 `.auth.` suffix rather than a bare wildcard, the same standard the
+    # `*.execute-api.us-west-2` and `productionresultssa*` entries above already apply.
+    #
+    # This is the only host the remaining `smoke` steps still need: `agent-runtime-smoke.sh` calls
+    # `bedrock-agentcore.us-west-2` (added in #1119) and `coach-api-smoke.sh` calls
+    # `*.execute-api.us-west-2` (long present).
+    - toFQDNs:
+        - matchPattern: "*.auth.us-west-2.amazoncognito.com"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+
     # Deliberately absent at this point: the rest of AWS (S3/ECR/Lambda in
     # us-west-2, Bedrock in us-east-1), OpenRouter.
     # These are added as each is observed dropped via Hubble, per D-13's

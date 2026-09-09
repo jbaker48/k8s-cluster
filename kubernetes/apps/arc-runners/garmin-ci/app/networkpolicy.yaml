@@ -387,7 +387,17 @@ spec:
             - port: "443"
               protocol: TCP
 
+    # PLAN-01 credential preflight and the authorized OpenRouter authoring path.
+    # Exact HTTPS hosts; existing IAM and tenant restrictions remain.
+    - toFQDNs:
+        - matchName: "secretsmanager.us-west-2.amazonaws.com"
+        - matchName: "openrouter.ai"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+
     # Deliberately absent at this point: the rest of AWS (S3/ECR/Lambda in
-    # us-west-2, Bedrock in us-east-1), OpenRouter.
+    # us-west-2, Bedrock in us-east-1).
     # These are added as each is observed dropped via Hubble, per D-13's
     # Hubble-observed iteration, not allowlisted speculatively.

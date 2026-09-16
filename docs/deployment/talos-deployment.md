@@ -13,24 +13,37 @@ This guide covers deploying a Kubernetes cluster using Talos Linux.
 ### 1. Install Dependencies
 
 ```bash
-# Install and trust mise configuration
+# Trust this repo's .mise.toml, then install every pinned tool
 mise trust
 mise install
-mise run deps
+```
+
+`.mise.toml` declares the complete toolchain, so nothing else needs installing
+by hand. Confirm the tools resolve through mise rather than a system package
+manager:
+
+```bash
+mise doctor
+mise which talhelper
 ```
 
 ### 2. Configure Cluster
 
-```bash
-# Initialize configuration
-task init
+Edit the Talos topology and versions directly — there is no generator step:
 
-# Edit cluster configuration
+```bash
+# Nodes, network, disks, patches, extensions
 vim kubernetes/bootstrap/talos/talconfig.yaml
 
-# Configure cluster settings
-task configure
+# Talos and Kubernetes versions (these take precedence)
+vim kubernetes/bootstrap/talos/talenv.yaml
+
+# Render machine configs into clusterconfig/
+task talos:generate-config
 ```
+
+You also need `age.key` in the repository root before bootstrapping, since
+`talhelper` encrypts the generated secrets with SOPS.
 
 ### 3. Bootstrap Cluster
 

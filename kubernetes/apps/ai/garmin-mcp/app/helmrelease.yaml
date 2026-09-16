@@ -26,7 +26,7 @@ spec:
         containers:
           app:
             image:
-              repository: ghcr.io/angryninja48/garmin_mcp
+              repository: ghcr.io/jbaker48/garmin_mcp
               tag: sha-1933f37
             env:
               TZ: ${TIMEZONE}

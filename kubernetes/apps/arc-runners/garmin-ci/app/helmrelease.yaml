@@ -1,0 +1,143 @@
+---
+# yaml-language-server: $schema=https://raw.githubusercontent.com/fluxcd-community/flux2-schemas/main/helmrelease-helm-v2.json
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: garmin-ci
+  namespace: arc-runners
+spec:
+  chartRef:
+    kind: OCIRepository
+    name: gha-runner-scale-set-garmin-ci
+    namespace: arc-runners
+  interval: 1h
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    cleanupOnFail: true
+    remediation:
+      strategy: rollback
+      retries: 3
+  dependsOn:
+    - name: actions-runner-controller
+      namespace: arc-systems
+  values:
+    githubConfigUrl: "https://github.com/jbaker48/garmin-ai-coach"
+    githubConfigSecret: arc-github-secret-garmin-ci
+    minRunners: 0
+    # m0xa (2026-09-07): maxRunners raised 2 -> 6 AND the runner request lowered 500m/4Gi ->
+    # 300m/2Gi, per the decision on garmin-ai-coach-1013. The two go together: maxRunners: 6 at
+    # the old 500m/4Gi request does NOT fit -- Kubernetes schedules on requests, not usage, so
+    # pods 5 and 6 would sit Pending on a physically idle cluster. Re-derived from a live
+    # 2026-09-07T07:35Z reading taken with ZERO garmin-ci runner pods running, so these are
+    # absolute totals, not increments. Same formula as the 39-07 block this replaces:
+    # cap(node) = floor(min(free_cpu*0.8/req_cpu, free_mem*0.8/req_mem)), 0.8 reserve so a
+    # saturated runner pool cannot make a node unschedulable for anything else.
+    #   at the OLD 500m/4Gi:
+    #     talos01: free 4235m CPU / 10.43Gi mem -> mem-bound -> cap 2
+    #     talos02: free 1395m CPU / 29.18Gi mem -> cpu-bound -> cap 2
+    #     talos03: free  405m CPU /  3.57Gi mem -> cpu-bound -> cap 0
+    #     sum = 4  -- which is why 6 could not schedule.
+    #   at the NEW 300m/2Gi:
+    #     talos01: free 4235m CPU / 10.43Gi mem -> mem-bound -> cap 4
+    #     talos02: free 1395m CPU / 29.18Gi mem -> cpu-bound -> cap 3
+    #     talos03: free  405m CPU /  3.57Gi mem -> cpu-bound -> cap 1
+    #     sum = 8  -- 6 fits with 2 slots of margin.
+    # The nodes are idle in reality and it is the REQUEST that binds: at this same reading
+    # talos02 had 82% of CPU requested but was using 15%, talos03 94% requested / 22% used, and
+    # the runner pod is the worst over-requester in the namespace (reserved 500m/4Gi, observed
+    # using 227m CPU / 302Mi memory). Lowering the request corrects the reservation toward
+    # observed usage; it does not give the job less memory, because limits.memory stays 8Gi.
+    # Note the 39-07 block this replaces summed free memory across all three nodes; capacity is
+    # per node and the arithmetic above is per node.
+    # Re-derive these numbers before changing the value again; do not just bump the integer.
+    maxRunners: 6
+    controllerServiceAccount:
+      namespace: arc-systems
+      name: actions-runner-controller-gha-rs-controller
+    template:
+      metadata:
+        labels:
+          workload: garmin-ci-runner
+      spec:
+        serviceAccountName: garmin-ci
+        automountServiceAccountToken: false
+        # Discovered live during 39-01 Task 3: talos02 (the node D-01/D-02 measured as the
+        # only one with request headroom) carries a stale dedicated=frigate:NoSchedule taint
+        # left over from eac3ac1d, even though 2273acd4 moved Frigate itself off talos02 in
+        # July 2026. Without this toleration the scheduler reports "1 node(s) had untolerated
+        # taint(s)" for talos02 and "Insufficient cpu"/"Insufficient memory" for talos01/03,
+        # which are both >85% requested -- the runner Pod cannot schedule anywhere. Matches the
+        # existing precedent already used twice in this repo for the same reason: 61fbf0e3
+        # (cloudnative-pg cluster17) and 68c6f1ab (intel-gpu-plugin).
+        tolerations:
+          - key: dedicated
+            operator: Equal
+            value: frigate
+            effect: NoSchedule
+        containers:
+          # GitHub's Actions service enforces a rolling MINIMUM runner version.
+          # When the pinned runner falls below it the service rejects the runner
+          # and the container exits with code 7 (RunnerVersionDeprecated). ARC
+          # 0.14.2 maps that to EphemeralRunner -> EphemeralRunnerSet ->
+          # AutoscalingRunnerSet status.phase=Outdated, which is an ABSORBING
+          # state: it deletes the listener, the ephemeral runner sets AND the
+          # GitHub-side runner scale set, then never recreates anything and
+          # never requeues (autoscalingrunnerset_controller.go L184/L246/L261).
+          # CI is then silently and permanently dead, surviving controller
+          # restarts. See upstream actions/actions-runner-controller #4595,
+          # #4596 and #4600.
+          # KEEP THIS PINNED AT OR NEAR THE LATEST actions/runner RELEASE.
+          # Tracked by the "ARC runner image" customManager in
+          # .github/renovate.json5.
+          #
+          # 39-06: swapped from the stock ghcr.io/actions/actions-runner to this
+          # falcondev-oss fork. The stock runner does not permit overriding
+          # ACTIONS_RESULTS_URL -- GitHub injects the value itself -- so the fork is
+          # mandatory for D-04's on-cluster cache server, not a convenience choice
+          # (39-06-PLAN.md Risk 3). Adopted by explicit operator decision at a
+          # blocking-human checkpoint (39-06-SUMMARY.md, verbatim answer
+          # "adopt-pinned-by-digest"), pinned by BOTH tag and @sha256 digest per that
+          # ruling: the digest makes the pin immutable against a tag re-push (the
+          # realistic supply-chain vector for an 11-star/5-fork upstream holding
+          # full job-execution privileges, including the AWS OIDC exchange path,
+          # on every garmin-ci job), while the tag keeps the pin matched by the
+          # extended "ARC runner image" customManager in .github/renovate.json5 --
+          # an untracked pin is exactly the D-06 failure mode the comment above
+          # already documents once. Digest re-verified live immediately before
+          # this edit landed (see 39-06-SUMMARY.md).
+          - name: runner
+            image: ghcr.io/falcondev-oss/actions-runner:2.336.0@sha256:b0cbd599b4124962a91930f85b0061adc5a5aaf874221d29741411fc661a259b
+            imagePullPolicy: IfNotPresent
+            command: ["/home/runner/run.sh"]
+            env:
+              # Risk 4 (39-CONTEXT.md): this variable carries job RESULTS traffic, not
+              # only cache traffic. If the cache server (gha-cache-server, this
+              # namespace) is down or unreachable, job completion reporting breaks and
+              # presents as the same never-leaves-in_progress-then-cancelled symptom a
+              # Cilium egress miss produces -- same signature, different cause. See
+              # ../../gha-cache-server/app/helmrelease.yaml's API_BASE_URL, which this
+              # value must stay byte-identical to, and
+              # .planning/phases/39-self-hosted-ci-on-the-talos-arc-cluster/39-CACHE-REVERT.md
+              # (garmin-ai-coach repo) for the one-edit revert if this needs to be
+              # backed out under pressure.
+              - name: CUSTOM_ACTIONS_RESULTS_URL
+                value: "http://gha-cache-server.arc-runners.svc.cluster.local:3000/"
+            # D-01: an intentional departure from k8s-cluster-ci, which sets no
+            # resources at all. talos02 is the only node with real headroom by
+            # request (measured 4825m CPU / ~33 GiB free); a BestEffort Pod
+            # would be scheduled onto talos01/talos03, where headroom is ~0,
+            # and be the first evicted under pressure -- presenting as random
+            # CI failure. No CPU limit is set deliberately so jobs can burst
+            # into idle CPU once scheduled (Burstable QoS).
+            resources:
+              requests:
+                # m0xa: lowered from 500m/4Gi. See the maxRunners comment above for the
+                # per-node arithmetic this figure comes from. The memory LIMIT deliberately
+                # stays 8Gi -- the job's real memory ceiling is unchanged, only the amount
+                # the scheduler reserves for it shrinks toward the observed 302Mi.
+                cpu: 300m
+                memory: 2Gi
+              limits:
+                memory: 8Gi

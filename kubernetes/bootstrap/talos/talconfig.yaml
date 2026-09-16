@@ -1,9 +1,9 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/budimanjojo/talhelper/master/pkg/config/schemas/talconfig.json
 ---
 # renovate: datasource=docker depName=ghcr.io/siderolabs/installer
-talosVersion: v1.12.6
+talosVersion: v1.13.9
 # renovate: datasource=docker depName=ghcr.io/siderolabs/kubelet
-kubernetesVersion: v1.35.3
+kubernetesVersion: v1.35.6
 
 clusterName: &clusterName "home-kubernetes"
 endpoint: https://10.20.0.250:6443
@@ -40,14 +40,18 @@ nodes:
         mtu: 1500
         vip:
           ip: *talosControlplaneVip
+        vlans:
+          - vlanId: 10
+            dhcp: false
+            mtu: 1500
+            addresses:
+              - 192.168.10.11/32
 
   - hostname: "talos02"
     ipAddress: "10.20.0.15"
     installDisk: "/dev/nvme0n1"
     # talosImageURL: factory.talos.dev/installer/176603246fc5e700eec6b7044a57dd2bd0521b1d8da6e335c5c24bd66dafba4b
     controlPlane: true
-    nodeTaints:
-      dedicated: "frigate:NoSchedule"
     networkInterfaces:
       - deviceSelector:
           hardwareAddr: "c8:a3:62:b7:5a:24"
@@ -60,10 +64,16 @@ nodes:
         mtu: 1500
         vip:
           ip: *talosControlplaneVip
+        vlans:
+          - vlanId: 10
+            dhcp: false
+            mtu: 1500
+            addresses:
+              - 192.168.10.12/32
 
   - hostname: "talos03"
     ipAddress: "10.20.0.16"
-    installDisk: "/dev/sda"
+    installDisk: "/dev/nvme0n1"
     # talosImageURL: factory.talos.dev/installer/176603246fc5e700eec6b7044a57dd2bd0521b1d8da6e335c5c24bd66dafba4b
     controlPlane: true
     networkInterfaces:
@@ -78,6 +88,12 @@ nodes:
         mtu: 1500
         vip:
           ip: *talosControlplaneVip
+        vlans:
+          - vlanId: 10
+            dhcp: false
+            mtu: 1500
+            addresses:
+              - 192.168.10.13/32
 
 # # Global patches
 # patches:
@@ -106,6 +122,7 @@ controlPlane:
         - net.ifnames=1 # Enable predictable NIC naming
       systemExtensions:
         officialExtensions:
+            - siderolabs/binfmt-misc # Register QEMU as the arm64 interpreter for privileged dind CI builds (39-02)
             - siderolabs/gasket-driver
             - siderolabs/i915
             - siderolabs/intel-ucode

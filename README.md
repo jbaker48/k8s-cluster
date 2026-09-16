@@ -15,32 +15,47 @@ This repository contains the complete configuration for a self-hosted Kubernetes
 
 ### Prerequisites
 
-- Install [mise](https://mise.jdx.dev/) for tool management
+- [mise](https://mise.jdx.dev/) — the only thing you install by hand. Every
+  other tool is declared in `.mise.toml` and installed by `mise install`.
 - 3+ nodes with Talos Linux installed
+- `age.key` — the SOPS decryption key. **Nothing can be decrypted without it**,
+  so it is not in the repository and cannot be regenerated.
 - Domain with Cloudflare DNS (optional)
 
 ### Setup
 
-1. **Install dependencies**
-   ```bash
-   mise trust
-   mise install
-   mise run deps
-   ```
+```bash
+git clone <this-repo> && cd k8s-cluster
+mise trust      # allow this repo's .mise.toml
+mise install    # install every pinned tool
+```
 
-2. **Configure cluster**
-   ```bash
-   task init
-   # Edit config.yaml with your settings
-   task configure
-   ```
+That is the whole toolchain. `mise install` provides `kubectl`, `talosctl`,
+`talhelper`, `flux`, `helm`, `helmfile`, `kustomize`, `sops`, `age`, `yq`,
+`jq`, `task`, `kubeconform`, `yamllint`, `minijinja-cli`, `stern`,
+`pre-commit`, `cloudflared`, `uv` and Python.
 
-3. **Bootstrap cluster**
-   ```bash
-   task bootstrap:talos
-   task bootstrap:apps
-   task bootstrap:flux
-   ```
+Verify the toolchain resolves through mise rather than a system package
+manager — a Homebrew binary earlier in `PATH` will shadow the pinned version:
+
+```bash
+mise doctor          # should report no problems
+mise which kubectl   # should print a path under ~/.local/share/mise
+```
+
+`.mise.toml` also exports `KUBECONFIG`, `SOPS_AGE_KEY_FILE` and `TALOSCONFIG`
+relative to the repo root, so those work from any directory inside it once
+`mise` is active in your shell.
+
+Then bootstrap, in this order:
+
+```bash
+task bootstrap:talos    # OS layer, etcd, kubeconfig
+task bootstrap:apps     # Cilium, CoreDNS, Spegel, Flux via helmfile
+task bootstrap:flux     # hand over to GitOps
+```
+
+Run `task --list` to see everything available.
 
 ## Applications
 

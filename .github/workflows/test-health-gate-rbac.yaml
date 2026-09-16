@@ -1,0 +1,73 @@
+---
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+name: "Test Health-Gate RBAC"
+
+on:
+  workflow_dispatch: {}
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
+
+jobs:
+  verify-rbac:
+    name: Verify health-gate RBAC and network reachability
+    environment: health-gate
+    runs-on: k8s-cluster-ci
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Bootstrap kubectl (SHA256-verified, not preinstalled on this runner image)
+        run: |
+          set -euo pipefail
+          KUBECTL_VERSION="$(curl -fsSL https://dl.k8s.io/release/stable-1.35.txt)"
+          curl -fsSL -o /tmp/kubectl \
+            "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+          curl -fsSL -o /tmp/kubectl.sha256 \
+            "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl.sha256"
+          echo "$(cat /tmp/kubectl.sha256)  /tmp/kubectl" | sha256sum -c -
+          sudo install -m 755 /tmp/kubectl /usr/local/bin/kubectl
+          kubectl version --client
+
+      - name: Write kubeconfig to runner-local temp file (never echoed)
+        run: |
+          set -euo pipefail
+          # secrets.HEALTH_GATE_KUBECONFIG is referenced only via the secrets
+          # context here (GitHub auto-masks it in logs); it is written
+          # straight to a runner-local temp file and never assigned to an
+          # env var that could be echoed or captured elsewhere in this job.
+          KCFG="${RUNNER_TEMP}/health-gate-kubeconfig.yaml"
+          printf '%s' "${{ secrets.HEALTH_GATE_KUBECONFIG }}" > "${KCFG}"
+          chmod 600 "${KCFG}"
+          printf 'KUBECONFIG=%s\n' "${KCFG}" >> "$GITHUB_ENV"
+
+      - name: Verify read access - list Kustomizations cluster-wide
+        run: kubectl get kustomizations.kustomize.toolkit.fluxcd.io -A
+
+      - name: Verify read access - list HelmReleases cluster-wide
+        run: kubectl get helmreleases.helm.toolkit.fluxcd.io -A
+
+      - name: Verify least-privilege boundary - mutating call must be Forbidden
+        run: |
+          set -euo pipefail
+          set +e
+          OUTPUT=$(kubectl patch kustomization k8s-cluster-ci -n flux-system \
+            --type=merge -p '{"metadata":{"labels":{"gsd-test":"true"}}}' 2>&1)
+          STATUS=$?
+          set -e
+
+          if [ "$STATUS" -eq 0 ]; then
+            echo "HARD FAILURE: mutating call unexpectedly succeeded - RBAC boundary is not enforced"
+            echo "$OUTPUT"
+            exit 1
+          fi
+
+          if echo "$OUTPUT" | grep -qi "forbidden"; then
+            echo "PASS: mutating call correctly rejected as Forbidden"
+            echo "$OUTPUT"
+          else
+            echo "HARD FAILURE: mutating call failed, but NOT with Forbidden - unexpected error"
+            echo "$OUTPUT"
+            exit 1
+          fi

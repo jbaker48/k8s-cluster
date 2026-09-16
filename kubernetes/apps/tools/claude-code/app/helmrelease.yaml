@@ -1,0 +1,154 @@
+---
+# yaml-language-server: $schema=https://raw.githubusercontent.com/bjw-s/helm-charts/main/charts/other/app-template/schemas/helmrelease-helm-v2.schema.json
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: &app claude-code
+  namespace: tools
+spec:
+  chartRef:
+    kind: OCIRepository
+    name: *app
+    namespace: tools
+  interval: 1h
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    cleanupOnFail: true
+    remediation:
+      strategy: rollback
+      retries: 3
+  values:
+    defaultPodOptions:
+      imagePullSecrets:
+        - name: claude-code-ghcr-pull-secret
+      # No pod-level runAsNonRoot/readOnlyRootFilesystem: the tailscale sidecar
+      # needs root and NET_ADMIN. Hardening is applied per container instead.
+      securityContext:
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+
+    controllers:
+      main:
+        annotations:
+          reloader.stakater.com/auto: "true"
+        # Mandatory, not stylistic: the PVC is ReadWriteOnce, so a RollingUpdate
+        # would deadlock forever on Multi-Attach.
+        strategy: Recreate
+        containers:
+          app:
+            image:
+              repository: ghcr.io/jbaker48/claude-code
+              # <claude-code CLI version>-<containers repo short sha>. Built and
+              # pushed by hand from containers@35d51b7 because Actions is stuck
+              # in that repo (runs queue with zero jobs) — see README.md.
+              tag: 2.1.232-35d51b7
+            env:
+              GIT_USER_NAME: Jon Baker
+              GIT_USER_EMAIL: jonbaker85@gmail.com
+              TMUX_SESSION: &tmuxSession claude
+            securityContext:
+              runAsUser: 1000
+              runAsGroup: 1000
+              allowPrivilegeEscalation: false
+            # The container serves no HTTP port, so a default TCP/HTTP probe
+            # would fail against a port nothing listens on. Liveness instead
+            # asserts the thing that actually defines a healthy workspace: the
+            # long-lived tmux session. The anchor keeps it in sync with the env.
+            probes:
+              liveness:
+                enabled: true
+                custom: true
+                spec:
+                  exec:
+                    command:
+                      - tmux
+                      - has-session
+                      - -t
+                      - *tmuxSession
+                  initialDelaySeconds: 60
+                  periodSeconds: 30
+                  timeoutSeconds: 10
+                  failureThreshold: 3
+              readiness:
+                enabled: false
+              startup:
+                enabled: false
+            resources:
+              requests:
+                cpu: 500m
+                memory: 1Gi
+              limits:
+                memory: 6Gi
+
+          # Sidecar shares the pod network namespace, so the tailnet address
+          # reaches sshd/mosh in the app container. Userspace mode would not
+          # accept inbound connections, hence kernel mode + NET_ADMIN.
+          tailscale:
+            image:
+              repository: ghcr.io/tailscale/tailscale
+              tag: v1.102.2
+            env:
+              TS_AUTHKEY:
+                valueFrom:
+                  secretKeyRef:
+                    name: claude-code-secret
+                    key: ts-authkey
+              TS_HOSTNAME: *app
+              TS_STATE_DIR: /var/lib/tailscale
+              # Empty on purpose: state lives on the PVC, so the pod needs no
+              # RBAC to write Secrets.
+              TS_KUBE_SECRET: ""
+              TS_USERSPACE: "false"
+              TS_EXTRA_ARGS: --advertise-tags=tag:k8s
+            securityContext:
+              runAsUser: 0
+              runAsGroup: 0
+              capabilities:
+                add:
+                  - NET_ADMIN
+            # squat.ai/tun is how this cluster hands /dev/net/tun to a container
+            # (generic-device-plugin in this namespace; same pattern as
+            # media/qbittorrent). Kernel-mode tailscaled cannot start without it.
+            resources:
+              requests:
+                cpu: 10m
+                memory: 64Mi
+                squat.ai/tun: "1"
+              limits:
+                memory: 256Mi
+                squat.ai/tun: "1"
+
+    # No service and no route: access is via kubectl exec and the tailnet, never
+    # the cluster gateway.
+
+    persistence:
+      home:
+        existingClaim: *app
+        advancedMounts:
+          main:
+            app:
+              - path: /home/developer
+            # subPath is load-bearing: without persisted state every restart
+            # registers a brand new tailnet node and suffixes the hostname.
+            tailscale:
+              - path: /var/lib/tailscale
+                subPath: tailscale-state
+      secrets:
+        type: secret
+        name: claude-code-secret
+        # 0440, not 0400: secret volumes are owned root:fsGroup, so with 0400
+        # the app container (uid 1000) could not read its own token.
+        defaultMode: 0440
+        advancedMounts:
+          main:
+            app:
+              - path: /var/run/secrets/claude-code
+                readOnly: true
+      tmp:
+        type: emptyDir
+        advancedMounts:
+          main:
+            app:
+              - path: /tmp

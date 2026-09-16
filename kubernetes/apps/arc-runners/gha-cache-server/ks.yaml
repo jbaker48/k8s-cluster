@@ -3,26 +3,25 @@
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata:
-  name: &app mcpo
+  name: &app gha-cache-server
   namespace: flux-system
-  labels:
-    substitution.flux.home.arpa/enabled: "true"
 spec:
-  targetNamespace: ai
+  targetNamespace: arc-runners
   commonMetadata:
     labels:
       app.kubernetes.io/name: *app
-  path: ./kubernetes/apps/ai/mcpo/app
+  dependsOn:
+    - name: actions-runner-controller
+  path: ./kubernetes/apps/arc-runners/gha-cache-server/app
   prune: true
   sourceRef:
     kind: GitRepository
     name: home-kubernetes
-  wait: true
+  healthChecks:
+    - apiVersion: helm.toolkit.fluxcd.io/v2
+      kind: HelmRelease
+      name: gha-cache-server
+      namespace: arc-runners
   interval: 30m
   retryInterval: 1m
-  timeout: 5m
-  postBuild:
-    substitute:
-      APP: *app
-  dependsOn:
-    - name: external-secrets
+  timeout: 10m

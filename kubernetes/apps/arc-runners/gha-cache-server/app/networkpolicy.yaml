@@ -1,0 +1,71 @@
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: gha-cache-server-ingress
+  namespace: arc-runners
+spec:
+  # T-39-32/T-39-34: identity-based ingress restriction is what keeps this cache server
+  # single-tenant, since it sits in the same namespace as Pods that execute PR-controlled
+  # workflow code. garmin-ci-runner is the ONLY runner workload in this namespace on the
+  # post-dind estate (garmin-ci-dind was retired, k8s-cluster PR #1104) — do not add a second
+  # selector for a workload that does not exist, and do not widen to the namespace.
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: gha-cache-server
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            workload: garmin-ci-runner
+      toPorts:
+        - ports:
+            - port: "3000"
+              protocol: TCP
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s-app: kube-dns
+            io.kubernetes.pod.namespace: kube-system
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+          rules:
+            dns:
+              - matchPattern: "*"
+
+    # 39-06 Task 3: this policy originally shipped DNS-only, on the stated assumption "it has no
+    # outbound dependency of its own" — WRONG, found live within minutes of the first real
+    # workflow run. Every CreateCacheEntry twirp call from a runner Pod 401'd with "Invalid
+    # token"; the cache server's own logs showed it trying and failing to verify the caller's
+    # GitHub Actions OIDC JWT against token.actions.githubusercontent.com's JWKS endpoint
+    # (`OIDC discovery failed ... Connect Timeout Error`) — this server validates every twirp
+    # request's bearer token itself (lib env ACTIONS_TOKEN_ISSUER/ACTIONS_TOKEN_JWKS_URL), it
+    # does not just proxy blindly. Without this host, no cache operation can ever succeed,
+    # regardless of anything upstream of it. D-13 pattern: added on live Hubble/log evidence,
+    # not speculatively.
+    - toFQDNs:
+        - matchName: "token.actions.githubusercontent.com"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+
+    # 39-06 Task 3: routes/[...path].ts proxies any twirp call this server does not implement
+    # itself (e.g. ArtifactService, used by actions/upload-artifact) straight through to
+    # DEFAULT_ACTIONS_RESULTS_URL, which defaults to this host -- confirmed live: the
+    # coach-conversations-smoke job's "Upload smoke evidence" step 502'd with a Connect Timeout
+    # to results-receiver.actions.githubusercontent.com before this entry was added. Job
+    # RESULTS/completion reporting itself was observed working without this entry (multiple
+    # garmin-ci jobs reached real terminal conclusions), so this gap is scoped to the
+    # artifact-proxy path specifically, not the core results-reporting path Risk 4 warns about --
+    # but it is the same catch-all proxy mechanism, so added defensively rather than left
+    # half-fixed.
+    - toFQDNs:
+        - matchName: "results-receiver.actions.githubusercontent.com"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP

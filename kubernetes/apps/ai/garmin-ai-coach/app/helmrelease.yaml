@@ -49,19 +49,20 @@ spec:
                   name: garmin-ai-coach-secret
           migrate:
             image:
-              repository: ghcr.io/angryninja48/garmin-ai-coach-backend
-              tag: sha-2f8387a
+              repository: ghcr.io/jbaker48/garmin-ai-coach-backend
+              tag: sha-ef3f200
             command: ["alembic", "upgrade", "head"]
             envFrom: *envFrom
         containers:
           app:
             image:
-              repository: ghcr.io/angryninja48/garmin-ai-coach-backend
-              tag: sha-2f8387a
+              repository: ghcr.io/jbaker48/garmin-ai-coach-backend
+              tag: sha-ef3f200
             env:
               CELERY_BROKER_URL: redis://dragonfly.database.svc.cluster.local:6379/0
               CONFIG_PATH: /app/config/my_training_config.yaml
               CORS_ORIGINS: https://coach.bakerhaus.cloud
+              GARMINCONNECT_TOKENS: /app/output/.garminconnect
             envFrom: *envFrom
             probes:
               liveness:
@@ -105,8 +106,8 @@ spec:
         containers:
           app:
             image:
-              repository: ghcr.io/angryninja48/garmin-ai-coach-frontend
-              tag: sha-2f8387a
+              repository: ghcr.io/jbaker48/garmin-ai-coach-frontend
+              tag: sha-ef3f200
             probes:
               liveness:
                 enabled: true
@@ -144,8 +145,8 @@ spec:
         containers:
           app:
             image:
-              repository: ghcr.io/angryninja48/garmin-ai-coach-backend
-              tag: sha-2f8387a
+              repository: ghcr.io/jbaker48/garmin-ai-coach-backend
+              tag: sha-ef3f200
             command:
               - celery
               - -A
@@ -156,6 +157,7 @@ spec:
             env:
               CELERY_BROKER_URL: redis://dragonfly.database.svc.cluster.local:6379/0
               CONFIG_PATH: /app/config/my_training_config.yaml
+              GARMINCONNECT_TOKENS: /app/output/.garminconnect
             envFrom: *envFrom
             securityContext:
               allowPrivilegeEscalation: false
@@ -230,7 +232,6 @@ spec:
           backend:
             app:
               - path: /app/config
-                readOnly: true
           celery-worker:
             app:
               - path: /app/config

@@ -2,12 +2,8 @@
 # yaml-language-server: $schema=https://json.schemastore.org/kustomization
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-namespace: ai
+namespace: home
 resources:
   - ./helmrelease.yaml
   - ./ocirepository.yaml
-  - ./externalsecret.yaml
-generatorOptions:
-  disableNameSuffixHash: true
-  annotations:
-    kustomize.toolkit.fluxcd.io/substitute: disabled
+  - ./pvc.yaml

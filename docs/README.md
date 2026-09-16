@@ -8,6 +8,7 @@ Welcome to the documentation for the k8s-cluster repository. This documentation 
 Initial cluster setup and deployment processes
 - **[talos-deployment.md](./deployment/talos-deployment.md)** - Complete Talos Kubernetes deployment guide
 - **[rebuild_cluster.md](./deployment/rebuild_cluster.md)** - Complete cluster rebuild procedures
+- **[rebuild_node.md](./deployment/rebuild_node.md)** - Rebuild or replace a single node without downtime
 
 ### ⚙️ [Cluster Management](./cluster-management/)
 Core cluster configuration and GitOps setup
@@ -42,7 +43,7 @@ Reusable templates for common configurations
 ### For Operations
 1. **[Operations/Maintenance](./operations/maintenance.md)** - Daily maintenance tasks
 2. **[Operations/Troubleshooting](./operations/troubleshooting.md)** - Quick troubleshooting reference
-3. **[Operations/Velero](./operations/velero.md)** - Backup and restore procedures
+3. **[Deployment/Rebuild Node](./deployment/rebuild_node.md)** - Node replacement and recovery
 
 ### For Development
 1. **[Development/Style Guide](./development/style-guide.md)** - Must-read for all contributors
@@ -55,7 +56,9 @@ Reusable templates for common configurations
 |------|---------------|
 | Add new application | [Style Guide](./development/style-guide.md) + [Templates](./templates/) |
 | Troubleshoot Flux | [Troubleshooting](./operations/troubleshooting.md) + [Flux Management](./cluster-management/flux.md) |
-| Backup/Restore | Contact your backup solution documentation |
+| Backup/Restore | VolSync: `task volsync:snapshot` / `task volsync:restore`; Postgres: [postgres.md](./operations/postgres.md) |
+| Rebuild one node | [Rebuild Node](./deployment/rebuild_node.md) |
+| Set up the toolchain | [root README](../README.md#setup) - `mise trust && mise install` |
 | Cluster rebuild | [Rebuild Procedures](./deployment/rebuild_cluster.md) |
 | Repository maintenance | [Maintenance Guide](./operations/maintenance.md) |
 | Setup encryption | [SOPS Encryption](./cluster-management/sops-encryption.md) |
@@ -76,5 +79,4 @@ Reusable templates for common configurations
 
 ---
 
-**Last Updated**: $(date +"%B %d, %Y")
-**Maintainer**: k8s-cluster documentation team
+**Last Updated**: August 29, 2026

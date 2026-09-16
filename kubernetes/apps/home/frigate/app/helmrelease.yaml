@@ -38,7 +38,9 @@ spec:
             resources:
               requests:
                 cpu: 800m
-                memory: 2Gi
+                # Observed steady-state is ~3.8Gi; a 2Gi request under-accounted
+                # for Frigate at scheduling time and let it overcommit its node.
+                memory: 4Gi
                 gpu.intel.com/i915: "1"
               limits:
                 memory: 6Gi
@@ -81,13 +83,22 @@ spec:
                   failureThreshold: 90
 
     defaultPodOptions:
-      tolerations:
-        - key: dedicated
-          value: frigate
-          effect: NoSchedule
       nodeSelector:
-        kubernetes.io/hostname: talos02
         intel.feature.node.kubernetes.io/gpu: "true"
+      # Mirrors Plex's rule. Plex's anti-affinity only stops Plex being placed
+      # on Frigate's node -- it does not stop Frigate moving onto Plex's node,
+      # so a Frigate reschedule could re-stack them and both would contend for
+      # the same iGPU, stalling Plex transcodes.
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchExpressions:
+                  - key: app.kubernetes.io/name
+                    operator: In
+                    values:
+                      - plex
+              topologyKey: "kubernetes.io/hostname"
     service:
       app:
         controller:  *app
@@ -140,12 +151,6 @@ spec:
         sizeLimit: 4Gi
         globalMounts:
           - path: /dev/shm
-      usb:
-        type: hostPath
-        hostPath: /dev/bus/usb
-        hostPathType: Directory
-        globalMounts:
-          - path: /dev/bus/usb
       media:
         existingClaim: frigate-nfs
         globalMounts:

@@ -45,6 +45,20 @@ spec:
           slack_channel: "#k8s-alerts"
           investigate_link: true
 
+    customPlaybooks:
+      - triggers:
+          - on_kubernetes_warning_event_create:
+              include:
+                - "HealthGateAutoRevert"
+                - "HealthGateInconclusive"
+                - "HealthGateRevertFailed"
+                - "HardExclusionBlocked"
+        actions:
+          - create_finding:
+              aggregation_key: "SRE Agent Health-Gate"
+              title: "$name"
+          - event_resource_events: {}
+
     runner:
       resources:
         requests:

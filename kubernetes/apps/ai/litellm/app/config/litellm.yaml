@@ -1,111 +1,238 @@
 model_list:
-# -*= Tier 3 — Heavy thinking =*-
+# -*= Individual models (with adaptive router quality metadata) =*-
 
-  - model_name: claude-opus-4-7
+  - model_name: deepseek-v4-flash
     litellm_params:
-      model: anthropic/claude-opus-4-7
-      api_key: {{ .LITELLM_ANTHROPIC_API_KEY }}
-
-  - model_name: gpt-5.5
-    litellm_params:
-      model: openrouter/openai/gpt-5.5-20260423
+      model: openrouter/deepseek/deepseek-v4-flash
       api_key: {{ .LITELLM_OPENROUTER_API_KEY }}
+    model_info:
+      adaptive_router_preferences:
+        quality_tier: 1
+        strengths: ["code_generation", "code_understanding", "general"]
 
-# -*= Tier 2 — Default brain =*-
-
-  - model_name: claude-sonnet-4-6
+  - model_name: deepseek-v4-pro
     litellm_params:
-      model: anthropic/claude-sonnet-4-6
-      api_key: {{ .LITELLM_ANTHROPIC_API_KEY }}
-
-# -*= Tier 1 — Cheap / high-volume =*-
-
-  - model_name: minimax-free
-    litellm_params:
-      model: openrouter/minimax/minimax-m2.5:free
+      model: openrouter/deepseek/deepseek-v4-pro
       api_key: {{ .LITELLM_OPENROUTER_API_KEY }}
-
-  - model_name: minimax-m2.7
-    litellm_params:
-      model: openrouter/minimax/minimax-m2.7
-      api_key: {{ .LITELLM_OPENROUTER_API_KEY }}
-
-  - model_name: glm-5
-    litellm_params:
-      model: openrouter/z-ai/glm-5.1-20260406
-      api_key: {{ .LITELLM_OPENROUTER_API_KEY }}
+    model_info:
+      adaptive_router_preferences:
+        quality_tier: 3
+        strengths: ["code_generation", "code_understanding", "analytical_reasoning", "technical_design"]
 
   - model_name: kimi-latest
     litellm_params:
       model: openrouter/moonshotai/kimi-latest
       api_key: {{ .LITELLM_OPENROUTER_API_KEY }}
+    model_info:
+      adaptive_router_preferences:
+        quality_tier: 1
+        strengths: ["code_generation", "general", "writing"]
 
-  - model_name: gemini-flash
+  - model_name: qwen3-coder
     litellm_params:
-      model: openrouter/google/gemini-3.1-flash-lite-preview
+      model: openrouter/qwen/qwen3-coder
+      api_key: {{ .LITELLM_OPENROUTER_API_KEY }}
+    model_info:
+      adaptive_router_preferences:
+        quality_tier: 2
+        strengths: ["code_generation", "code_understanding", "technical_design"]
+
+  - model_name: qwen3-flash
+    litellm_params:
+      model: openrouter/qwen/qwen3.6-flash
+      api_key: {{ .LITELLM_OPENROUTER_API_KEY }}
+    model_info:
+      adaptive_router_preferences:
+        quality_tier: 1
+        strengths: ["code_generation", "general"]
+
+  - model_name: qwen3-plus
+    litellm_params:
+      model: openrouter/qwen/qwen3.6-plus
+      api_key: {{ .LITELLM_OPENROUTER_API_KEY }}
+    model_info:
+      adaptive_router_preferences:
+        quality_tier: 2
+        strengths: ["code_generation", "code_understanding", "analytical_reasoning"]
+
+  - model_name: gemini-3-pro
+    litellm_params:
+      model: openrouter/google/gemini-3.1-pro-preview
+      api_key: {{ .LITELLM_OPENROUTER_API_KEY }}
+    model_info:
+      adaptive_router_preferences:
+        quality_tier: 3
+        strengths: ["analytical_reasoning", "technical_design", "writing"]
+
+  - model_name: sonar-research
+    litellm_params:
+      model: openrouter/perplexity/sonar-deep-research
       api_key: {{ .LITELLM_OPENROUTER_API_KEY }}
 
   - model_name: claude-haiku-4-5
     litellm_params:
       model: anthropic/claude-haiku-4-5-20251001
       api_key: {{ .LITELLM_ANTHROPIC_API_KEY }}
+    model_info:
+      adaptive_router_preferences:
+        quality_tier: 2
+        strengths: ["code_generation", "code_understanding", "general"]
 
-  - model_name: qwen3-coder
+  - model_name: claude-sonnet-4-6
     litellm_params:
-      model: openrouter/qwen/qwen3-coder-next
-      api_key: {{ .LITELLM_OPENROUTER_API_KEY }}
+      model: anthropic/claude-sonnet-4-6
+      api_key: {{ .LITELLM_ANTHROPIC_API_KEY }}
+    model_info:
+      adaptive_router_preferences:
+        quality_tier: 3
+        strengths: ["code_generation", "code_understanding", "analytical_reasoning", "technical_design"]
 
-# -*= Routing aliases =*-
-# Clients call these — LiteLLM picks from the pool
+  - model_name: claude-opus-4-8
+    litellm_params:
+      model: anthropic/claude-opus-4-8
+      api_key: {{ .LITELLM_ANTHROPIC_API_KEY }}
+    model_info:
+      adaptive_router_preferences:
+        quality_tier: 3
+        strengths: ["code_generation", "analytical_reasoning", "technical_design", "writing"]
+
+  - model_name: gpt-5.5
+    litellm_params:
+      model: openrouter/openai/gpt-5.5-20260423
+      api_key: {{ .LITELLM_OPENROUTER_API_KEY }}
+    model_info:
+      adaptive_router_preferences:
+        quality_tier: 3
+        strengths: ["code_generation", "analytical_reasoning", "technical_design"]
+
+# -*= Adaptive router aliases =*-
+# adaptive_router_config must be inside litellm_params (not auto_router_config — that's a file path)
+
+  - model_name: default
+    litellm_params:
+      model: auto_router/adaptive_router
+      adaptive_router_config:
+        available_models: ["deepseek-v4-pro", "qwen3-coder", "claude-sonnet-4-6"]
+        weights:
+          quality: 0.5
+          cost: 0.5
 
   - model_name: tier1
     litellm_params:
-      model: openrouter/minimax/minimax-m2.5:free
-      api_key: {{ .LITELLM_OPENROUTER_API_KEY }}
-
-  - model_name: tier1
-    litellm_params:
-      model: openrouter/z-ai/glm-5.1-20260406
-      api_key: {{ .LITELLM_OPENROUTER_API_KEY }}
-
-  - model_name: tier1
-    litellm_params:
-      model: openrouter/moonshotai/kimi-latest
-      api_key: {{ .LITELLM_OPENROUTER_API_KEY }}
-
-  - model_name: tier1
-    litellm_params:
-      model: openrouter/google/gemini-3.1-flash-lite-preview
-      api_key: {{ .LITELLM_OPENROUTER_API_KEY }}
+      model: auto_router/adaptive_router
+      adaptive_router_config:
+        available_models: ["deepseek-v4-flash", "qwen3-flash", "kimi-latest"]
+        weights:
+          quality: 0.2
+          cost: 0.8
 
   - model_name: tier2
+    litellm_params:
+      model: auto_router/adaptive_router
+      adaptive_router_config:
+        available_models: ["deepseek-v4-pro", "qwen3-coder", "claude-haiku-4-5"]
+        weights:
+          quality: 0.5
+          cost: 0.5
+
+  - model_name: tier3
+    litellm_params:
+      model: auto_router/adaptive_router
+      adaptive_router_config:
+        available_models: ["deepseek-v4-pro", "claude-sonnet-4-6", "gemini-3-pro"]
+        weights:
+          quality: 0.8
+          cost: 0.2
+
+  - model_name: plan
+    litellm_params:
+      model: auto_router/adaptive_router
+      adaptive_router_config:
+        available_models: ["gemini-3-pro", "deepseek-v4-pro", "claude-sonnet-4-6"]
+        weights:
+          quality: 0.8
+          cost: 0.2
+
+  - model_name: code
+    litellm_params:
+      model: auto_router/adaptive_router
+      adaptive_router_config:
+        available_models: ["qwen3-coder", "deepseek-v4-flash"]
+        weights:
+          quality: 0.45
+          cost: 0.55
+
+  - model_name: heavy
+    litellm_params:
+      model: auto_router/adaptive_router
+      adaptive_router_config:
+        available_models: ["deepseek-v4-pro", "claude-opus-4-8", "gemini-3-pro"]
+        weights:
+          quality: 0.9
+          cost: 0.1
+
+  - model_name: cheap
+    litellm_params:
+      model: auto_router/adaptive_router
+      adaptive_router_config:
+        available_models: ["qwen3-flash", "deepseek-v4-flash", "kimi-latest"]
+        weights:
+          quality: 0.05
+          cost: 0.95
+
+  - model_name: fast
+    litellm_params:
+      model: auto_router/adaptive_router
+      adaptive_router_config:
+        available_models: ["qwen3-flash", "deepseek-v4-flash"]
+        weights:
+          quality: 0.2
+          cost: 0.8
+
+# -*= Direct shorthand aliases =*-
+
+  - model_name: sonnet
     litellm_params:
       model: anthropic/claude-sonnet-4-6
       api_key: {{ .LITELLM_ANTHROPIC_API_KEY }}
 
-  - model_name: tier3
+  - model_name: haiku
     litellm_params:
-      model: anthropic/claude-opus-4-7
+      model: anthropic/claude-haiku-4-5-20251001
       api_key: {{ .LITELLM_ANTHROPIC_API_KEY }}
 
-  - model_name: tier3
+  - model_name: opus
     litellm_params:
-      model: openrouter/openai/gpt-5.5-20260423
+      model: anthropic/claude-opus-4-8
+      api_key: {{ .LITELLM_ANTHROPIC_API_KEY }}
+
+  - model_name: deepseek
+    litellm_params:
+      model: openrouter/deepseek/deepseek-v4-pro
+      api_key: {{ .LITELLM_OPENROUTER_API_KEY }}
+
+  - model_name: research
+    litellm_params:
+      model: openrouter/perplexity/sonar-deep-research
       api_key: {{ .LITELLM_OPENROUTER_API_KEY }}
 
 router_settings:
-  routing_strategy: cost-based-completion
+  routing_strategy: simple-shuffle
   num_retries: 3
   fallbacks:
     - tier3: ["tier2"]
     - tier2: ["tier1"]
-    - tier1: ["minimax-m2.7", "claude-haiku-4-5"]
+    - tier1: ["claude-haiku-4-5"]
+    - fallback: ["default"]
+    - default: ["claude-haiku-4-5"]
 
 general_settings:
   master_key: {{ .LITELLM_MASTER_KEY }}
   database_url: "postgresql://{{ .LITELLM_POSTGRES_USER }}:{{ .LITELLM_POSTGRES_PASSWORD }}@postgres17-rw.database.svc.cluster.local/litellm"
 
 litellm_settings:
+  success_callback: ["prometheus"]
+  failure_callback: ["prometheus"]
   num_retries: 3
   request_timeout: 180
   allowed_fails: 3

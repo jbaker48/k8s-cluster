@@ -15,6 +15,18 @@ spec:
   superuserSecret:
     name: cloudnative-pg-secret
   enableSuperuserAccess: true
+  affinity:
+    # One instance per node: openebs-hostpath is node-local storage, and
+    # CNPG's default `preferred` anti-affinity let both instances land on
+    # talos02 -- leaving no node-level redundancy after a disk replacement.
+    enablePodAntiAffinity: true
+    topologyKey: kubernetes.io/hostname
+    podAntiAffinityType: required
+    tolerations:
+      - key: dedicated
+        operator: Equal
+        value: frigate
+        effect: NoSchedule
   postgresql:
     parameters:
       max_connections: "400"
@@ -25,6 +37,10 @@ spec:
   resources:
     requests:
       cpu: 500m
+      # Without an explicit request, Kubernetes copies the 4Gi limit into the
+      # request, reserving 12Gi across three instances against ~400Mi actual
+      # use. Headroom to burst is preserved by the unchanged 4Gi limit.
+      memory: 1Gi
     limits:
       memory: 4Gi
   monitoring:

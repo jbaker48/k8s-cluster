@@ -1,0 +1,403 @@
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: garmin-ci-egress
+  namespace: arc-runners
+spec:
+  # SCOPE: only selects ephemeral per-job runner Pods (workload:
+  # garmin-ci-runner, set via helmrelease.yaml template.metadata.labels --
+  # applies solely to the Pod template for jobs, not the chart's other
+  # resources). The scale-set's persistent listener Pod
+  # (garmin-ci-<hash>-listener, which polls GitHub for job assignments) runs
+  # in the arc-systems namespace under different labels and is therefore NOT
+  # covered by this policy -- it never executes PR-controlled workflow code,
+  # unlike the ephemeral runner Pods this policy restricts (matches
+  # k8s-cluster-ci-egress's own scope boundary and T-39-01 in this plan's
+  # threat model).
+  endpointSelector:
+    matchLabels:
+      workload: garmin-ci-runner
+  egress:
+    # 1. DNS resolution - required before toFQDNs can match anything
+    - toEndpoints:
+        - matchLabels:
+            k8s-app: kube-dns
+            io.kubernetes.pod.namespace: kube-system
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+          rules:
+            dns:
+              - matchPattern: "*"
+
+    # 2. GitHub Actions control-plane endpoints (registration, job pickup,
+    #    checkout, log/result upload) -- carried from k8s-cluster-ci-egress,
+    #    whose own comments record the incidents behind the last two entries:
+    #    release-assets.githubusercontent.com (curl-download redirect target,
+    #    04-01-PLAN.md Task 2) and productionresultssa*.blob.core.windows.net
+    #    (the Results-service upload backend; without it the job's test step
+    #    passes in 1-2s but the run never leaves in_progress and eventually
+    #    reports cancelled -- Risk 1 in 39-CONTEXT.md). Narrowed to the
+    #    observed shard prefix rather than the bare *.blob.core.windows.net
+    #    suffix, which would permit egress to any Azure Storage account
+    #    (attacker-controlled ones included) under that shared multi-tenant
+    #    domain, not just GitHub's own backend -- same standard the analog
+    #    applies.
+    - toFQDNs:
+        - matchName: "github.com"
+        - matchName: "api.github.com"
+        - matchName: "codeload.github.com"
+        - matchPattern: "*.actions.githubusercontent.com"
+        - matchName: "objects.githubusercontent.com"
+        - matchName: "release-assets.githubusercontent.com"
+        - matchPattern: "productionresultssa*.blob.core.windows.net"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+
+    # 3. Toolchain and package registries (Risk 6, 39-CONTEXT.md): the ARC
+    #    runner image has no preinstalled Node or Python and no hosted tool
+    #    cache, so setup-node/setup-uv and npm/pip re-download on every job.
+    #    This tracer task exercises only the Node/npm path
+    #    (design-system-gates runs actions/setup-node + npm ci); pypi.org /
+    #    files.pythonhosted.org / astral.sh are seeded now for the uv-based
+    #    jobs later plans convert, per the action's explicit instruction to
+    #    seed all five together rather than add Python endpoints piecemeal.
+    - toFQDNs:
+        - matchName: "nodejs.org"
+        - matchName: "registry.npmjs.org"
+        - matchName: "pypi.org"
+        - matchName: "files.pythonhosted.org"
+        - matchName: "astral.sh"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+
+    # 39-03 Task 3: `lint-and-test`'s "Install pixi" step ran
+    # `curl -fsSL https://pixi.sh/install.sh | bash` and hung for the full
+    # 270s curl timeout before failing with "Failed to connect to pixi.sh
+    # port 443" (run 33251635164) -- the exact silent-hang shape Risk 1
+    # describes, confirmed by the step's own error output naming the host.
+    # pixi.sh/install.sh itself redirects to pixi.prefix.dev to fetch the
+    # actual binary -- confirmed by "Install pixi"'s NEXT failure once
+    # pixi.sh alone was reachable (run 33252239155): "Failed to connect to
+    # pixi.prefix.dev port 443". garmin-ci-dind's own networkpolicy.yaml
+    # (39-02, PR #1102) already carries this exact same host for the
+    # identical reason on the privileged scale set.
+    # `pixi install -q` itself resolves conda-forge packages from
+    # conda.anaconda.org -- confirmed by "Install dependencies"'s failure
+    # once "Install pixi" succeeded (run 33253535591): "failed to fetch
+    # pip-25.2-...conda ... conda.anaconda.org/conda-forge/...". Same host
+    # 39-02 (PR #1103) already had to add for the privileged scale set's
+    # identical pixi install path.
+    - toFQDNs:
+        - matchName: "pixi.sh"
+        - matchName: "pixi.prefix.dev"
+        - matchName: "conda.anaconda.org"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+
+    # 39-03 Task 3: `web-a11y`'s "Install Playwright's Chromium browser" step
+    # (`npx playwright install --with-deps chromium`) runs `apt-get update`
+    # against every configured apt source, then fails to locate every
+    # browser-dependency package once the index fetch times out (run
+    # 33251635164) -- confirmed by the step's own apt error output naming
+    # all three hosts (archive.ubuntu.com/security.ubuntu.com for the
+    # package indices, ppa.launchpadcontent.net for the runner image's
+    # pre-configured git-core PPA source, refreshed by the same apt-get
+    # update call). Needed by web-a11y, web-a11y-authenticated and
+    # web-a11y-onboarding, all of which run `--with-deps chromium`.
+    - toFQDNs:
+        - matchName: "archive.ubuntu.com"
+        - matchName: "security.ubuntu.com"
+        - matchName: "ppa.launchpadcontent.net"
+      toPorts:
+        - ports:
+            - port: "80"
+              protocol: TCP
+            - port: "443"
+              protocol: TCP
+
+    # 39-03 Task 3: `evals`'s "Configure AWS credentials via OIDC" step
+    # (assumes vars.DEV_DEPLOY_ROLE_ARN in us-west-2) hung with no terminal
+    # error for over 10 minutes on run 33251635164 -- Hubble confirmed
+    # repeated DROPPED SYN packets from the runner Pod to 44.248.101.199:443,
+    # resolved via `cilium-dbg fqdn cache list` to sts.us-west-2.amazonaws.com.
+    # Needed by every job in this file that assumes DEV_DEPLOY_ROLE_ARN.
+    - toFQDNs:
+        - matchName: "sts.us-west-2.amazonaws.com"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+
+    # 260830-te2 follow-up: `judged-evals-report-only` (garmin-ai-coach ci.yml, run
+    # 33310268416 on `main`, 2026-08-30) executed for the FIRST time -- it had been
+    # `skipped` behind `needs: evals` in every prior run, so this gap could not surface
+    # until the KMS entry below unblocked `evals`. Its "Assume management evaluation role"
+    # step retried `validateCredentials` 12 times over ~3 minutes and gave up with:
+    #   Credentials could not be loaded, please check your action inputs:
+    #   Could not load credentials from any providers
+    # That silent-hang-then-retry shape, with no IAM error, is the same D-13 connection
+    # signature as the sts.us-west-2 entry directly above -- not a deny. This job assumes
+    # MANAGEMENT_EVAL_ROLE_ARN with `aws-region: us-east-1`, so it needs STS in us-east-1,
+    # a different endpoint from the us-west-2 one already allowed. Shared by
+    # `judged-evals-blocking`, which uses the identical role and region.
+    - toFQDNs:
+        - matchName: "sts.us-east-1.amazonaws.com"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+
+    # 260830-te2 follow-up 2: `coach-conversations-smoke` (garmin-ai-coach ci.yml, run
+    # 33361142288 on `main`, 2026-08-31) reached its script for the first time -- the aws
+    # CLI/uuidgen fix landed in 65d6f132 -- and then died with:
+    #   FATAL: D-20 contract value app-plane/coach-api-url is empty.
+    #   Deploy CoachApiStack-dev (36-02-PLAN.md Task 1) before running this script.
+    # That message is MISLEADING and cost real debugging time. The parameter exists and is
+    # populated, and the assumed role is granted ssm:GetParameter on its exact ARN (verified
+    # live against platform-dev). `read_contract_value` in scripts/smoke-coach-conversations.sh
+    # wraps the call in `2>/dev/null || true`, so a CONNECTION failure is indistinguishable
+    # from an absent value. The tell is the clock: the step sat from 05:53:43 to 05:59:23 --
+    # ~5m40s -- before reporting "empty", which is a network timeout, not a lookup miss.
+    # Same D-13 class as the kms and sts entries above. Needed by every job here that reads a
+    # D-20 contract value on this scale set; `build-web` never hit it because it runs on the
+    # workstation runner, which has unrestricted egress.
+    - toFQDNs:
+        - matchName: "ssm.us-west-2.amazonaws.com"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+
+    # 260830-te2: the `evals` job's "Decrypt held-out evaluation scenarios" step
+    # (garmin-ai-coach ci.yml, run 33302981308 on `main`, 2026-08-30) failed with:
+    #   failed to decrypt sops data key with AWS KMS: operation error KMS:
+    #   Decrypt, exceeded maximum number of attempts, 3, https response error
+    #   StatusCode: 0, RequestID: , request send failed, Post
+    #   "https://kms.us-west-2.amazonaws.com/"
+    # `StatusCode: 0` with `request send failed` is a connection failure, not an
+    # IAM deny -- the same D-13 class as the eight endpoints 39-03 added, of
+    # which sts.us-west-2.amazonaws.com (the entry directly above) was one.
+    # Needed by `sops` decrypting the held-out eval scenarios against
+    # arn:aws:kms:us-west-2:440882756298:key/b8836966-7d4d-4f05-8324-6fe98eca8664
+    # (alias/eval-held-out), via the AWS SDK for Go rather than the AWS CLI --
+    # which is why this job needs the KMS endpoint but not an `aws` binary.
+    # This is D-13's sanctioned Hubble-observed iteration finally firing for
+    # KMS, not speculative widening -- KMS was named explicitly in this file's
+    # own "deliberately absent" comment below, pending exactly this observation.
+    - toFQDNs:
+        - matchName: "kms.us-west-2.amazonaws.com"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+
+    # 39-03 Task 3: `web-a11y`'s "Install Playwright's Chromium browser" step
+    # got past apt (previous entry) and then hung repeatedly re-attempting
+    # `https://cdn.playwright.dev/builds/cft/.../chrome-linux64.zip` (run
+    # 33252239155's own step log names the URL directly) until Playwright's
+    # own download retry budget was exhausted with "Failed to download
+    # Chrome for Testing". Needed by every job that runs
+    # `playwright install --with-deps chromium` (web-a11y and its two
+    # authenticated/onboarding siblings).
+    - toFQDNs:
+        - matchName: "cdn.playwright.dev"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+
+    # 39-04 Task 3: the `evals` job (garmin-ai-coach ci.yml, run 33277966304)
+    # hung on its `astral-sh/setup-uv@v5` step -- Hubble confirmed repeated
+    # DROPPED SYN packets from the runner Pod to releases.astral.sh
+    # (172.67.68.3 et al.), resolved via `cilium-dbg fqdn cache list`. This is
+    # the uv binary's own release-download host, distinct from `astral.sh`
+    # (seeded above for pypi/uv's install-script host). Needed by every job
+    # using `astral-sh/setup-uv@v5`, including deploy-dev.yml's `smoke` job.
+    - toFQDNs:
+        - matchName: "releases.astral.sh"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+
+    # 39-06: egress to the on-cluster gha-cache-server (D-04), which
+    # CUSTOM_ACTIONS_RESULTS_URL on this Pod's runner container now points both cache and
+    # job-results traffic at. Uses toEndpoints, NOT toServices: the analog k8s-cluster-ci
+    # policy records live evidence that toServices silently dropped traffic on this
+    # cluster's Cilium version, hanging the client until its own timeout rather than
+    # connecting or being refused.
+    - toEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: gha-cache-server
+            io.kubernetes.pod.namespace: arc-runners
+      toPorts:
+        - ports:
+            - port: "3000"
+              protocol: TCP
+
+    # Phase 39 criterion-1 re-verification (garmin-ai-coach ci.yml, run 33361142288 on
+    # `main`, 2026-08-31). Two jobs died on this scale set from the same D-13 connection
+    # class, both confirmed from the raw job logs rather than inferred:
+    #
+    #   onboarding-canonical-domain-probe -- ran 07:42:39Z to 08:03:00Z and was CANCELLED at
+    #   its own 20-minute job budget (ci.yml timeout-minutes: 20). Its six setup steps all
+    #   succeeded, including "Configure AWS credentials via OIDC" (logged
+    #   `Authenticated as assumedRoleId AROAWNJVI7LFLPBEVSLRZ`), so this is NOT the
+    #   push-to-main OIDC trust-policy failure the phase record previously attributed it to.
+    #   The probe step itself logged at 07:58:34Z:
+    #     Could not connect to the endpoint URL: "https://cognito-idp.us-west-2.amazonaws.com/"
+    #   19m36s of the 20m budget went to TCP connect timeouts against a host not on this
+    #   allowlist. This is the same failure-advances-to-the-next-unlisted-host progression the
+    #   ssm.us-west-2 entry above records: attempt 1 died on ssm, that entry landed, attempt 2
+    #   then died on cognito-idp.
+    #
+    #   coach-conversations-smoke -- its non-vacuity guard logged at 07:43:51Z:
+    #     status=000 body=curl: (28) Connection timed out after 15001 milliseconds
+    #   against https://bb5icqb6ic.execute-api.us-west-2.amazonaws.com/dev. status=000 with
+    #   curl exit 28 is a connection failure, not an HTTP response -- the API Gateway data
+    #   plane is a distinct host from the ssm/sts control-plane endpoints already allowed.
+    #
+    # Scoped to the us-west-2 execute-api suffix rather than a bare wildcard: every API this
+    # repo calls is a regional API Gateway in that one region, and the narrower pattern keeps
+    # the same standard the productionresultssa* entry above applies to Azure Storage.
+    - toFQDNs:
+        - matchName: "cognito-idp.us-west-2.amazonaws.com"
+        - matchPattern: "*.execute-api.us-west-2.amazonaws.com"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+
+    # Seeded WITH the two observed entries above, and honestly marked as the one endpoint here
+    # NOT yet observed dropped. scripts/onboarding-canonical-write-domain-probe.sh calls
+    # `aws dynamodb query/update-item/get-item/put-item --region us-west-2` at lines 87, 96,
+    # 232, 238 and 283 -- all of them AFTER the cognito-idp calls at lines 81/102/107/110 that
+    # the run above died on, so the probe has never reached DynamoDB and Hubble cannot yet have
+    # observed the drop. Adding it now follows this file's own precedent for seeding a coherent
+    # set (section 3 seeds pypi.org/files.pythonhosted.org/astral.sh together, "rather than add
+    # Python endpoints piecemeal") and avoids burning another ~80-minute CI round trip to learn
+    # what the script's own source already states. If the next run proves it unnecessary, remove
+    # it -- D-13's iteration works in both directions.
+    - toFQDNs:
+        - matchName: "dynamodb.us-west-2.amazonaws.com"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+
+    # 2026-09-04 -- the `smoke` job, OBSERVED dropped. Run 33861694930 logged at step 5 of 13:
+    #
+    #     Publishing smoke-test event: runId=33861694930 bus=platform-dev
+    #     Connect timeout on endpoint URL: "https://events.us-west-2.amazonaws.com/"
+    #
+    # This is the same failure-advances-to-the-next-unlisted-host progression the ssm and
+    # cognito-idp entries above record, and it matters more than one job: `smoke` dies at step 5
+    # of 13, so the EIGHT steps behind it stay unreached -- including the PLAT-02 and PLAT-03
+    # tenant-isolation deny tests, which have not run since 2026-08-29.
+    #
+    # BOTH endpoints are seeded together, deliberately. scripts/smoke-test.sh publishes an event
+    # and THEN polls CloudWatch Logs for its `SMOKE_OK` marker, so allowing only `events` moves
+    # the identical timeout into the polling loop and costs another ~80-minute CI round trip to
+    # learn what the script's own source already states. Same precedent as the dynamodb entry
+    # above and section 3's pypi/files.pythonhosted/astral trio: seed a coherent set rather than
+    # add endpoints piecemeal. `logs` is the one of the two not yet observed dropped, and is
+    # marked as such honestly -- if the next run proves it unnecessary, remove it; D-13's
+    # iteration works in both directions.
+    - toFQDNs:
+        - matchName: "events.us-west-2.amazonaws.com"
+        - matchName: "logs.us-west-2.amazonaws.com"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+
+    # 2026-09-04, the second half of the same `smoke` progression. With `events`/`logs` allowed,
+    # `smoke` cleared step 6 and then took the PLAT-02 tenant-isolation and PLAT-03 agent-layer
+    # deny tests GREEN for the first time since 2026-08-29 -- both now pass. It advances to step
+    # 12, `tenant-lifecycle-smoke.sh`, and dies the same way:
+    #
+    #     Reading D-20 SSM contract values for env=dev region=us-west-2...
+    #     Connect timeout on endpoint URL: "https://cloudformation.us-west-2.amazonaws.com/"
+    #
+    # This entry seeds the endpoints the THREE remaining steps need, read from their sources
+    # rather than discovered one 80-minute CI round trip at a time -- the same reasoning the
+    # dynamodb entry and section 3's pypi/files.pythonhosted/astral trio already record, and the
+    # reason `logs` was seeded alongside `events` above and proved necessary:
+    #
+    #   tenant-lifecycle-smoke.sh -> cloudformation, cognito-idp, dynamodb, ssm, sts
+    #   agent-runtime-smoke.sh    -> bedrock-agentcore, bedrock-agentcore-control, cognito-idp,
+    #                                logs, ssm
+    #   coach-api-smoke.sh        -> apigatewayv2, cognito-idp, dynamodb, logs, ssm, sts
+    #
+    # Everything but `cloudformation`, `apigateway` and the two `bedrock-agentcore` hosts is
+    # already allowed above. `apigateway.us-west-2` is the CONTROL plane (apigatewayv2 describe
+    # calls); the DATA plane is `*.execute-api.us-west-2`, already present and a distinct host.
+    #
+    # `cloudformation` is the one OBSERVED dropped; the other three are seeded on their scripts'
+    # own source and are marked as such honestly. If a later run proves any unnecessary, remove
+    # it -- D-13's iteration works in both directions.
+    - toFQDNs:
+        - matchName: "cloudformation.us-west-2.amazonaws.com"
+        - matchName: "apigateway.us-west-2.amazonaws.com"
+        - matchName: "bedrock-agentcore.us-west-2.amazonaws.com"
+        - matchName: "bedrock-agentcore-control.us-west-2.amazonaws.com"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+
+    # 2026-09-05, OBSERVED dropped, and the last host `smoke` needs. #1119's entry worked --
+    # `cloudformation` resolved and `tenant-lifecycle-smoke.sh` read every D-20 contract value
+    # (`tenant-lifecycle-stack-deployed=true`). It then hung five minutes and died with curl
+    # exit 28 at its own first real call:
+    #
+    #     --- Check 0: obtain a scoped admin access token via the control plane's machine client ---
+    #     (01:26:04 -> 01:31:08, no output)
+    #
+    # `scripts/tenant-lifecycle-smoke.sh:208` builds
+    # `https://${HOSTED_UI_DOMAIN}.auth.us-west-2.amazoncognito.com/oauth2/token`. That is the
+    # Cognito HOSTED UI / OAuth2 token endpoint, a genuinely different host from
+    # `cognito-idp.us-west-2.amazonaws.com` already allowed above -- the latter is the control
+    # API, this is the user-pool's own domain, and the `amazoncognito.com` suffix differs from
+    # `amazonaws.com` entirely.
+    #
+    # `matchPattern` rather than `matchName` because the domain prefix is a per-pool value read
+    # from SSM at run time (`440882756298-c803c34c...`), so no fixed name can match it. Scoped to
+    # the us-west-2 `.auth.` suffix rather than a bare wildcard, the same standard the
+    # `*.execute-api.us-west-2` and `productionresultssa*` entries above already apply.
+    #
+    # This is the only host the remaining `smoke` steps still need: `agent-runtime-smoke.sh` calls
+    # `bedrock-agentcore.us-west-2` (added in #1119) and `coach-api-smoke.sh` calls
+    # `*.execute-api.us-west-2` (long present).
+    - toFQDNs:
+        - matchPattern: "*.auth.us-west-2.amazoncognito.com"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+
+    # PLAN-01 credential preflight and the authorized OpenRouter authoring path.
+    # Exact HTTPS hosts; existing IAM and tenant restrictions remain.
+    - toFQDNs:
+        - matchName: "secretsmanager.us-west-2.amazonaws.com"
+        - matchName: "openrouter.ai"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+
+    # Deliberately absent at this point: the rest of AWS (S3/ECR/Lambda in
+    # us-west-2, Bedrock in us-east-1).
+    # These are added as each is observed dropped via Hubble, per D-13's
+    # Hubble-observed iteration, not allowlisted speculatively.

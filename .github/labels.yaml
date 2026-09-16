@@ -16,3 +16,7 @@
 - { name: "type/break",              color: "f6412d" }
 # Uncategorized
 - { name: "hold",                    color: "ee0701" }
+# Gate
+- { name: "gate/human-required",     color: "b60205", description: "Excluded from AI auto-merge — human must merge" }
+# Automation
+- { name: "automated-revert",        color: "5319e7", description: "Applied by the health-gate revert-bot to its own self-merged revert PRs (D-04 bypass marker)" }

@@ -24,6 +24,11 @@ spec:
     controllers:
       litellm:
         type: deployment
+        replicas: 2
+        strategy: RollingUpdate
+        rollingUpdate:
+          unavailable: 1
+          surge: 0
 
         annotations:
           reloader.stakater.com/auto: "true"
@@ -41,19 +46,19 @@ spec:
           app:
             image:
               repository: ghcr.io/berriai/litellm
-              tag: main-stable
-            # env:
-            #   TZ: ${TIMEZONE}
+              tag: v1.86.1
+            env:
+              TZ: ${TIMEZONE}
             args:
               - "--config"
               - "/app/proxy_config.yaml"
 
             resources:
               requests:
-                cpu: 500m
-                memory: 1Gi
+                cpu: 100m
+                memory: 1536Mi
               limits:
-                memory: 1Gi
+                memory: 4Gi
 
             probes:
               liveness:

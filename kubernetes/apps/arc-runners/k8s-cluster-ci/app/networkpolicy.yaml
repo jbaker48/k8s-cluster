@@ -1,0 +1,184 @@
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: k8s-cluster-ci-egress
+  namespace: arc-runners
+spec:
+  # SCOPE: only selects ephemeral per-job runner Pods (workload:
+  # k8s-cluster-ci-runner, set via helmrelease.yaml template.metadata.labels
+  # — applies solely to the Pod template for jobs, not the chart's other
+  # resources). The scale-set's persistent listener Pod
+  # (k8s-cluster-ci-<hash>-listener, which polls GitHub for job assignments)
+  # runs in the arc-systems namespace under different labels and is
+  # therefore NOT covered by this policy. This is an intentional scope
+  # boundary matching PLAN.md's threat model (T-02-03: "k8s-cluster-ci
+  # runner pod egress") — the listener never executes PR-controlled
+  # workflow code, unlike the ephemeral runner Pods this policy restricts.
+  endpointSelector:
+    matchLabels:
+      workload: k8s-cluster-ci-runner
+  egress:
+    # 1. DNS resolution - required before toFQDNs can match anything
+    - toEndpoints:
+        - matchLabels:
+            k8s-app: kube-dns
+            io.kubernetes.pod.namespace: kube-system
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+          rules:
+            dns:
+              - matchPattern: "*"
+
+    # 2. GitHub Actions control-plane endpoints (registration, job pickup,
+    #    checkout, log/result upload). *.blob.core.windows.net added after
+    #    live diagnosis: cilium-dbg fqdn cache list showed the runner's
+    #    results-receiver.actions.githubusercontent.com lookup resolving
+    #    (redirecting) to productionresultssa10.blob.core.windows.net ->
+    #    20.209.226.129/20.209.226.1/20.209.227.33 - Azure Blob Storage,
+    #    the actual backend GitHub's newer Results service uses to upload
+    #    job logs/completion status. Without this, cilium-dbg monitor showed
+    #    repeated "Policy denied" SYN drops to those IPs: the job's actual
+    #    test step succeeded every time in ~1-2s, but the run never resolved
+    #    past "in_progress" and eventually reported conclusion: cancelled
+    #    (GH-side timeout waiting for a completion signal that never arrived).
+    #    Required for ANY job on this runner to report completion - not
+    #    litellm/D-03-specific, so scoped under this rule, not rule 3.
+    - toFQDNs:
+        - matchName: "github.com"
+        - matchName: "api.github.com"
+        - matchName: "codeload.github.com"
+        - matchPattern: "*.actions.githubusercontent.com"
+        - matchName: "objects.githubusercontent.com"
+        # Added after live diagnosis of ai-review.yaml's bootstrap step
+        # (04-01-PLAN.md Task 2): `curl` against
+        # github.com/cli/cli/releases/download/... and
+        # github.com/astral-sh/python-build-standalone/releases/download/...
+        # redirects to this CDN host for the actual asset bytes -
+        # objects.githubusercontent.com does not cover it. Without this,
+        # the download hung for the full --max-time then failed with
+        # "curl: (28) Failed to connect to release-assets.githubusercontent.com
+        # port 443 ... Timeout was reached".
+        - matchName: "release-assets.githubusercontent.com"
+        # Narrowed to the observed shard prefix rather than the bare
+        # *.blob.core.windows.net suffix, which would permit egress to any
+        # Azure Storage account (attacker-controlled ones included) under
+        # that shared multi-tenant domain, not just GitHub's own backend.
+        - matchPattern: "productionresultssa*.blob.core.windows.net"
+        # dl.k8s.io - the Kubernetes project's own release site, used by
+        # every Phase 5 workflow's kubectl bootstrap step (SHA256-verified
+        # curl download of the kubectl binary + checksum). Not a GitHub
+        # domain, but grouped under this rule since it's the same
+        # allowlist-of-download-sources concern. Confirmed live: resolves
+        # directly to Fastly IPs (151.101.x.x) with no CDN redirect chain,
+        # so no secondary FQDN is needed (unlike release-assets above).
+        # Without this, curl hung for the full 5-minute --max-time then
+        # failed with "curl: (28) Failed to connect to dl.k8s.io port 443
+        # ... Timeout was reached" - discovered live via health-gate.yaml's
+        # first real GitHub Actions run (05-04/05-05 plans).
+        - matchName: "dl.k8s.io"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+
+    # 3. litellm - via envoy-internal only, never litellm's Service directly.
+    #    toServices (k8sService selector) silently dropped traffic live on
+    #    this cluster's Cilium version (VALIDATION.md Assumption A3, confirmed
+    #    unverified in research) - curl hung until its own --max-time timeout
+    #    rather than connecting or being refused. Swapped to the documented
+    #    toEndpoints fallback selecting envoy-internal's actual pod labels.
+    #    Port must be 10443 (the Service's real targetPort on the pod), not
+    #    443 (the externally-exposed Service port) - toEndpoints enforces
+    #    post-DNAT for locally-initiated Service traffic, unlike toServices
+    #    which is Service-port-aware. Confirmed live: port 443 here silently
+    #    dropped traffic (client hang); port 10443 connects and litellm's
+    #    /health/liveliness returns 200 through the envoy-internal gateway.
+    - toEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: envoy
+            gateway.envoyproxy.io/owning-gateway-name: envoy-internal
+            io.kubernetes.pod.namespace: network
+      toPorts:
+        - ports:
+            - port: "10443"
+              protocol: TCP
+
+    # 4. konflate - direct Service call, bypassing envoy-internal entirely.
+    #    Routing through envoy-internal would present Envoy's own pod identity
+    #    to Cilium (not the runner's), breaking konflate's ingress-restricting
+    #    CiliumNetworkPolicy (D-07). See konflate/app/networkpolicy.yaml and
+    #    03-RESEARCH.md Common Pitfall 1.
+    - toEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: konflate
+            app.kubernetes.io/instance: konflate
+            io.kubernetes.pod.namespace: ai
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP
+
+    # 5. Kubernetes API server - required for health-gate.yaml's kubectl
+    #    polling of Flux Kustomization/HelmRelease conditions (D-02/HEALTH-01).
+    #    toEntities: kube-apiserver is Cilium's special identity for the
+    #    apiserver - avoids the toServices pitfall already documented in
+    #    rule 3 above (silently dropped traffic on this cluster's Cilium
+    #    version) and avoids guessing the apiserver's ClusterIP/port.
+    #
+    #    COVERS ONLY the node IPs. See rule 6 - this rule alone is NOT enough
+    #    for the address HEALTH_GATE_KUBECONFIG actually dials.
+    - toEntities:
+        - kube-apiserver
+
+    # 6. Talos shared control-plane VIP (${KUBE_API_VIP_ADDR}:6443).
+    #
+    #    Rule 5 is necessary but NOT sufficient. Cilium derives the
+    #    reserved:kube-apiserver identity label from the addresses listed in the
+    #    default/kubernetes Endpoints object, which on this cluster is exactly
+    #    10.20.0.14 / 10.20.0.15 / 10.20.0.16 - the node IPs. The Talos shared
+    #    control-plane VIP is a floating address elected via etcd and is never
+    #    an apiserver Endpoint, so Cilium cannot attach the kube-apiserver label
+    #    to it cluster-wide. Confirmed live with `cilium-dbg bpf ipcache get`:
+    #
+    #      talos01 (currently holds the VIP): 10.20.0.250 -> identity 1
+    #                                         (reserved:host +
+    #                                          reserved:kube-apiserver)  ALLOW
+    #      talos02 (does not hold it):        10.20.0.250 -> identity 2
+    #                                         (reserved:world)            DROP
+    #      talos03 (does not hold it):        10.20.0.250 -> identity 2
+    #                                         (reserved:world)            DROP
+    #
+    #    A CiliumNetworkPolicy with any egress section is default-deny-egress
+    #    for every endpoint it selects, so on talos02/talos03 NOTHING matched
+    #    the VIP on 6443 and the SYN was silently dropped, surfacing as `dial
+    #    tcp 10.20.0.250:6443: i/o timeout`. Whether CI could reach the API was
+    #    therefore a coin flip on scheduler placement vs. VIP ownership - it
+    #    worked on 2026-08-07 (runner landed on the VIP holder) and broke from
+    #    2026-08-14 (runner consistently landed on talos03, pod IP 10.69.0.182).
+    #    This silently disabled BOTH exclusion-gate.yaml's HardExclusionBlocked
+    #    notification AND health-gate.yaml's entire poll/auto-revert safety net.
+    #
+    #    This is an upstream Cilium limitation with no entity-based remedy - the
+    #    kube-apiserver entity has no mechanism for control-plane VIPs
+    #    (cilium/cilium #29323, #36136, #42367). An explicit /32 is the
+    #    documented workaround. Deliberately scoped to the single VIP address
+    #    and port 6443 only: this grants no broader reserved:world egress, so
+    #    the litellm-only-egress property this policy exists to enforce is
+    #    preserved.
+    #
+    #    NOTE ON REDUNDANCY: on the node that holds the VIP the address resolves
+    #    to reserved:host, which CIDR rules cannot select - but rule 5 already
+    #    covers that case because identity 1 carries reserved:kube-apiserver.
+    #    Rules 5 and 6 are complementary, and together they are deterministic on
+    #    every node regardless of where the VIP currently lives.
+    - toCIDR:
+        - "${KUBE_API_VIP_ADDR}/32"
+      toPorts:
+        - ports:
+            - port: "6443"
+              protocol: TCP

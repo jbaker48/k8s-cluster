@@ -30,6 +30,8 @@ spec:
             image:
               repository: evcc/evcc
               tag: 0.306.2
+            env:
+              TZ: Australia/Sydney
             envFrom:
               - secretRef:
                   name: evcc-secret

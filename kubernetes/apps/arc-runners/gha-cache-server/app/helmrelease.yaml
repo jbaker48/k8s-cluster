@@ -1,0 +1,115 @@
+---
+# yaml-language-server: $schema=https://raw.githubusercontent.com/bjw-s/helm-charts/main/charts/other/app-template/schemas/helmrelease-helm-v2.schema.json
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: gha-cache-server
+  namespace: arc-runners
+spec:
+  chartRef:
+    kind: OCIRepository
+    name: gha-cache-server
+    namespace: arc-runners
+  interval: 1h
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    cleanupOnFail: true
+    remediation:
+      strategy: rollback
+      retries: 3
+  values:
+    controllers:
+      main:
+        # Load-bearing, not stylistic: the metadata store is SQLite on a shared RWX volume
+        # (pvc.yaml). A RollingUpdate would briefly run two Pods writing the same SQLite file.
+        strategy: Recreate
+        containers:
+          app:
+            image:
+              repository: ghcr.io/falcondev-oss/github-actions-cache-server
+              # Newest published non-digest, non-caged tag, enumerated live via the anonymous
+              # ghcr.io token endpoint at plan-06 execution time (2026-08-29):
+              #   curl -sI ".../v2/falcondev-oss/github-actions-cache-server/manifests/9.7.0"
+              #   -> docker-content-digest: sha256:3999b0202ec509f3b2084ef92cc50b408838e0d442b5997dd6dff2d89f4fe7b4
+              tag: "9.7.0"
+            env:
+              # Trailing slash required — must be byte-identical to CUSTOM_ACTIONS_RESULTS_URL
+              # on garmin-ci's runner container (../garmin-ci/app/helmrelease.yaml). Addressed by
+              # in-cluster Service DNS, never an external hostname: this cluster's CoreDNS
+              # forwards "." to the node resolver with no zone delegation for the internal
+              # domain, so in-cluster Pods get NXDOMAIN for internal hostnames (the reason
+              # k8s-cluster-ci needs a hostAliases workaround). The Service name sidesteps that
+              # entirely (Risk 8, 39-CONTEXT.md).
+              API_BASE_URL: "http://gha-cache-server.arc-runners.svc.cluster.local:3000/"
+              STORAGE_DRIVER: filesystem
+              STORAGE_FILESYSTEM_PATH: /data/cache
+              DB_DRIVER: sqlite
+              DB_SQLITE_PATH: /data/cache-server.db
+              NITRO_PORT: "3000"
+              # Shorter than the upstream 90-day default (lib/schemas.ts,
+              # falcondev-oss/github-actions-cache-server@dev) — see pvc.yaml's sizing comment
+              # for the reasoning. This is the eviction-policy discretion CONTEXT.md leaves open.
+              CACHE_CLEANUP_OLDER_THAN_DAYS: "14"
+            probes:
+              liveness:
+                enabled: true
+                custom: true
+                spec:
+                  httpGet:
+                    # routes/health.ts exists in the upstream source
+                    # (falcondev-oss/github-actions-cache-server@dev) — confirmed live rather
+                    # than assumed.
+                    path: /health
+                    port: 3000
+                  initialDelaySeconds: 10
+                  periodSeconds: 10
+                  timeoutSeconds: 5
+                  failureThreshold: 3
+              readiness:
+                enabled: true
+                custom: true
+                spec:
+                  httpGet:
+                    path: /health
+                    port: 3000
+                  initialDelaySeconds: 5
+                  periodSeconds: 5
+                  timeoutSeconds: 3
+                  failureThreshold: 3
+            securityContext:
+              allowPrivilegeEscalation: false
+              capabilities:
+                drop: ["ALL"]
+              # readOnlyRootFilesystem deliberately NOT set: lib/storage.ts's own temp-file path
+              # (`tmp-${randomUUID()}`) resolves under STORAGE_FILESYSTEM_PATH via safePath(), so
+              # the app's own writes land on the mounted /data volume — but the upstream image is
+              # an unmodified node:25-alpine base (Dockerfile) and may have other writable-root
+              # expectations (npm/pnpm runtime state, etc.) that were not exhaustively checked
+              # against a live Pod in this plan. Left at the chart default (writable root) rather
+              # than guessed at; a future maintainer who wants read-only root should verify against
+              # a live Pod first and add an emptyDir for /tmp only if something breaks.
+            resources:
+              # Long-lived Pod holding idle requests against the cluster's free-capacity budget
+              # (39-07 sizes the concurrency ceiling against that budget, unlike the ephemeral
+              # minRunners: 0 runner Pods) — kept intentionally small; 39-07's arithmetic must
+              # subtract this.
+              requests:
+                cpu: 100m
+                memory: 256Mi
+              limits:
+                memory: 1Gi
+    service:
+      main:
+        controller: main
+        ports:
+          http:
+            port: 3000
+    persistence:
+      data:
+        existingClaim: gha-cache-server
+        globalMounts:
+          - path: /data
+    # No `route` key: this service is cluster-internal only (T-39-32) and must not be exposed
+    # through a Gateway.

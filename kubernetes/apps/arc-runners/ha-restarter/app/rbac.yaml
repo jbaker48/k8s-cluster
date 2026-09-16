@@ -14,9 +14,12 @@ rules:
     resources: ["deployments"]
     verbs: ["get", "list", "watch", "patch"]
     resourceNames: ["home-assistant-v2"]
+  - apiGroups: ["apps"]
+    resources: ["replicasets"]
+    verbs: ["get", "list", "watch"]
   - apiGroups: [""]
     resources: ["pods"]
-    verbs: ["get", "list"]
+    verbs: ["get", "list", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

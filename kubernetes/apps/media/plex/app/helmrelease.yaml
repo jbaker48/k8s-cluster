@@ -98,7 +98,10 @@ spec:
         type: LoadBalancer
         annotations:
           lbipam.cilium.io/ips: ${SVC_PLEX_ADDR}
-        externalTrafficPolicy: Local
+        # L2-announced IP: Cilium L2 announcements ignore eTP=Local and may
+        # announce from a node without the pod, so Cluster is required (DSR
+        # still preserves client source IPs)
+        externalTrafficPolicy: Cluster
         ports:
           http:
             port: 32400

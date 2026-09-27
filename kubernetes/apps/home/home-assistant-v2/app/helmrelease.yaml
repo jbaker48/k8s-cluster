@@ -93,6 +93,8 @@ spec:
               limits:
                 cpu: 500m
                 memory: 2Gi
+        pod:
+          terminationGracePeriodSeconds: 90
     defaultPodOptions:
       securityContext:
         runAsUser: 1000

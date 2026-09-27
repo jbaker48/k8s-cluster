@@ -397,6 +397,16 @@ spec:
             - port: "443"
               protocol: TCP
 
+    # 2026-09-27: deploy-dev smoke run 36305057312 failed in the IAM drift
+    # census with a Connect timeout on https://iam.amazonaws.com/. The
+    # scripts/iam-drift-census.sh AWS IAM calls use this exact global endpoint.
+    - toFQDNs:
+        - matchName: "iam.amazonaws.com"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+
     # Deliberately absent at this point: the rest of AWS (S3/ECR/Lambda in
     # us-west-2, Bedrock in us-east-1).
     # These are added as each is observed dropped via Hubble, per D-13's

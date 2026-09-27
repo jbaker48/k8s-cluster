@@ -1,0 +1,79 @@
+---
+# Reuse node-exporter metrics already collected by Prometheus. Glances would
+# add another host agent and host access without adding data HA cannot get here.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: home-assistant-node-health
+spec:
+  groups:
+    - name: home-assistant-node-health
+      interval: 30s
+      rules:
+        - record: ha_node_cpu_usage_percent
+          expr: |
+            (
+              100 * (
+                1 -
+                sum by (kubernetes_node) (
+                  rate(node_cpu_seconds_total{mode="idle"}[5m])
+                )
+                /
+                sum by (kubernetes_node) (
+                  rate(node_cpu_seconds_total[5m])
+                )
+              )
+            )
+            and on (kubernetes_node)
+            max by (kubernetes_node) (
+              (up{job="node-exporter"} == 1)
+              and
+              (time() - timestamp(up{job="node-exporter"}) < 120)
+            )
+        - record: ha_node_memory_usage_percent
+          expr: |
+            (
+              100 * (
+                1 -
+                max by (kubernetes_node) (node_memory_MemAvailable_bytes)
+                /
+                max by (kubernetes_node) (node_memory_MemTotal_bytes)
+              )
+            )
+            and on (kubernetes_node)
+            max by (kubernetes_node) (
+              (up{job="node-exporter"} == 1)
+              and
+              (time() - timestamp(up{job="node-exporter"}) < 120)
+            )
+        - record: ha_node_disk_used_percent
+          expr: |
+            (
+              100 * (
+                1 -
+                max by (kubernetes_node) (
+                  node_filesystem_avail_bytes{mountpoint="/var", fstype="xfs"}
+                )
+                /
+                max by (kubernetes_node) (
+                  node_filesystem_size_bytes{mountpoint="/var", fstype="xfs"}
+                )
+              )
+            )
+            and on (kubernetes_node)
+            max by (kubernetes_node) (
+              (up{job="node-exporter"} == 1)
+              and
+              (time() - timestamp(up{job="node-exporter"}) < 120)
+            )
+        - record: ha_node_cpu_temperature_celsius
+          expr: |
+            max by (kubernetes_node) (
+              node_thermal_zone_temp{type="x86_pkg_temp"}
+            )
+            and on (kubernetes_node)
+            max by (kubernetes_node) (
+              (up{job="node-exporter"} == 1)
+              and
+              (time() - timestamp(up{job="node-exporter"}) < 120)
+            )

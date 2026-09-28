@@ -407,6 +407,15 @@ spec:
             - port: "443"
               protocol: TCP
 
+    # 2026-09-29 authorized no-model-call probe: DNS resolved; curl timed out.
+    # Hubble logged the exact hostname:443 egress DENIED and dropped TCP SYN.
+    - toFQDNs:
+        - matchName: "bedrock-runtime.us-west-2.amazonaws.com"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+
     # Deliberately absent at this point: the rest of AWS (S3/ECR/Lambda in
     # us-west-2, Bedrock in us-east-1).
     # These are added as each is observed dropped via Hubble, per D-13's

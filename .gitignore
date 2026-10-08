@@ -43,3 +43,14 @@ wiki
 
 .sisyphus
 .planning
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key
+.beads/proxieddb/
+*.gate.lock*
+
+# Agent workflow output
+.lane-out/
+.autopilot-logs/

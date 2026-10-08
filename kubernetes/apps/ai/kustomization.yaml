@@ -4,8 +4,5 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - ./namespace.yaml
-  - ./garmin-ai-coach/ks.yaml
-  - ./garmin-mcp/ks.yaml
   - ./konflate/ks.yaml
   - ./litellm/ks.yaml
-  - ./openwebui/ks.yaml

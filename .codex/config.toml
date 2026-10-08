@@ -1,0 +1,51 @@
+# Project-scoped Codex configuration for k8s-cluster.
+# Workflow rationale: docs/dynamic-workflow.md. lane.sh pins model, effort and
+# sandbox on every delegated exec; these are only the interactive defaults.
+
+# Sol is the cheap Codex-side coordinator (6.1 is the current Sol).
+model = "gpt-6.1-sol"
+model_reasoning_effort = "low"
+plan_mode_reasoning_effort = "medium"
+
+# Compact long threads and stop one command dumping a whole diff or suite.
+model_auto_compact_token_limit = 120000
+model_auto_compact_token_limit_scope = "total"
+tool_output_token_limit = 10000
+
+# Luna owns every implementation edit. Four disjoint workers is the maximum.
+[agents]
+enabled = true
+default_subagent_model = "gpt-6-luna"
+default_subagent_reasoning_effort = "max"
+max_concurrent_threads_per_session = 4
+interrupt_message = false
+
+# Read-only cluster diagnostics only.
+[mcp_servers.flux-k8]
+enabled = true
+enabled_tools = [
+  "get_kubernetes_resources",
+  "get_kubernetes_logs",
+  "get_kubernetes_metrics",
+  "get_flux_instance",
+]
+
+[mcp_servers.context7]
+enabled = true
+
+# Unrelated to cluster work; keep their schemas out of context.
+[mcp_servers.gmail]
+enabled = false
+
+[mcp_servers.hass]
+enabled = false
+
+[mcp_servers.repomix]
+enabled = false
+
+[mcp_servers.playwright]
+enabled = false
+
+# Beads context hooks are part of the shared workflow.
+[features]
+hooks = true

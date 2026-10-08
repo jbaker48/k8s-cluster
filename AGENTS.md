@@ -1,5 +1,11 @@
 # Agent Instructions
 
+Beads (`bd`) is the only tracker; run `bd prime` for workflow context. Read `docs/dynamic-workflow.md` for model routing (Opus / Sol / Luna / Astra), authority, validation and handoffs, and `docs/workflow-specialists.md` for per-domain validation. Project conventions are in `CLAUDE.md`.
+
+Skills (`.agents/skills/`): `$standup`, `$work`, `$pr-review`, `$decide`, `$autopilot`, `$groom`, `$scope`. Agents never merge; the owner merges PRs until Beads epic `k8s-zdb.6` ships.
+
+# Agent Instructions
+
 This project uses **bd** (beads) for issue tracking. Run `bd prime` for full workflow context.
 
 > **Architecture in one line:** Issues live in a local Dolt database

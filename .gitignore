@@ -50,3 +50,7 @@ wiki
 .beads-credential-key
 .beads/proxieddb/
 *.gate.lock*
+
+# Agent workflow output
+.lane-out/
+.autopilot-logs/

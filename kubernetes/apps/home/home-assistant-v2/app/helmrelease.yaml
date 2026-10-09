@@ -79,6 +79,11 @@ spec:
               SECRET_TRUSTED_PROXIES_1: ${SVC_EXTERNAL_GW_ADDR}/32
               SECRET_TRUSTED_PROXIES_2: ${SVC_INTERNAL_GW_ADDR}/32
               SECRET_TRUSTED_PROXIES_3: ${CLUSTER_CIDR}
+              SECRET_AMBER_API_KEY:
+                valueFrom:
+                  secretKeyRef:
+                    name: home-assistant-v2-secrets
+                    key: SECRET_AMBER_API_KEY
             envFrom:
               - secretRef:
                   name: home-assistant-v2-secrets

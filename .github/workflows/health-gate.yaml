@@ -698,17 +698,19 @@ jobs:
           LAST_CLASSIFICATION_COMPLETED=false
 
           record_api_error() {
-            if [ "$POLL_LAST_CALL_TIMED_OUT" = true ] \
+            if [ "$POLL_WALL_EXPIRED" = true ] \
+              && [ "$POLL_LAST_CALL_TIMED_OUT" = true ] \
               && [ "$LAST_CLASSIFICATION_COMPLETED" = true ]; then
-              LAST_RESULT=$(printf '%s' "$LAST_RESULT" | jq -c \
+              if LAST_RESULT=$(printf '%s' "$LAST_RESULT" | jq -c \
                 --argjson observed_superseded "$EXTRA_SUPERSEDED" '
                 .
                 | .superseded = ((.superseded == true) or $observed_superseded)
                 | if any(.diagnostics[]?; .code == "poll-deadline-after-timeout") then .
                   else .diagnostics += [{"kind":"Sample","namespace":"","name":"","code":"poll-deadline-after-timeout","reason":"poll-deadline-after-timeout"}]
                   end
-              ')
-              return
+              '); then
+                return
+              fi
             fi
             LAST_RESULT=$(printf \
               '{"target_sha":"%s","all_ready":false,"sample_valid":false,"superseded":%s,"stalled_or_failed":[],"diagnostics":[{"kind":"Sample","namespace":"","name":"","code":"api-error","reason":"api-error"}]}' \
@@ -789,8 +791,10 @@ jobs:
               "$TARGET_SHA")
           else
             while :; do
-              if [ "$POLL_WALL_EXPIRED" = true ] \
-                || [ "$SECONDS" -ge "$POLL_WALL_DEADLINE" ]; then
+              if [ "$SECONDS" -ge "$POLL_WALL_DEADLINE" ]; then
+                POLL_WALL_EXPIRED=true
+              fi
+              if [ "$POLL_WALL_EXPIRED" = true ]; then
                 POLL_LAST_CALL_TIMED_OUT=true
                 record_api_error
                 break

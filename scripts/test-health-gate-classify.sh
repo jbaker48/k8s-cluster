@@ -412,6 +412,9 @@ required=(
   wall-deadline-preserves-last-real-diagnostics
   wall-deadline-loop-preserves-last-invalid-classification
   wall-deadline-read-preserves-last-invalid-classification
+  poll-false-superseded-overrides-base-true
+  pre-deadline-classifier-timeout-retries
+  wall-deadline-preservation-jq-error
   remote-build-dependency-owner
   render-preflight
   newest-history-failed
@@ -678,7 +681,8 @@ case "$tool" in
     ;;
   sleep)
     trace sleep
-    if [ "$POLL_SCENARIO" = wall-timeout ]; then
+    if [ "$POLL_SCENARIO" = wall-timeout ] \
+      || [ "$POLL_SCENARIO" = wall-deadline-preservation-jq-error ]; then
       exec "$REAL_SLEEP" 10
     fi
     ;;
@@ -699,7 +703,16 @@ case "$tool" in
     ;;
   jq)
     classifier=false
-    for arg in "$@"; do [ "$arg" = superseded ] && classifier=true; done
+    preservation=false
+    for arg in "$@"; do
+      [ "$arg" = superseded ] && classifier=true
+      [ "$arg" = observed_superseded ] && preservation=true
+    done
+    if [ "$preservation" = true ] \
+      && [ "$POLL_SCENARIO" = wall-deadline-preservation-jq-error ]; then
+      trace jq-preservation-error
+      exit 4
+    fi
     if [ "$classifier" = true ]; then
       response=$(next_response "$POLL_JQ_RESPONSES" jq-error-count)
       case "$response" in
@@ -796,7 +809,7 @@ for fixture in "$FIXTURE_DIR"/*.json; do
   result=$(awk '/^diagnostics<<HEALTHGATEEOF$/ { inside=1; next } inside && /^HEALTHGATEEOF$/ { exit } inside { print }' "$GITHUB_OUTPUT")
   if ! printf '%s' "$result" | jq -e \
     --argjson expected "$(jq -c '.expected' "$poll_effective_fixture")" \
-    --argjson poll_superseded "$(jq -c '.poll_expected.superseded // .expected.superseded' "$poll_effective_fixture")" \
+    --argjson poll_superseded "$(jq -c 'if (.poll_expected | has("superseded")) then .poll_expected.superseded else .expected.superseded end' "$poll_effective_fixture")" \
     --argjson poll_codes "$(jq -c '.poll_expected.diagnostic_codes // .expected.diagnostic_codes // []' "$poll_effective_fixture")" '
     .all_ready == $expected.all_ready
     and .sample_valid == $expected.sample_valid

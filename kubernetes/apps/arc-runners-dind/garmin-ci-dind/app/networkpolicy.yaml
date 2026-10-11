@@ -144,9 +144,13 @@ spec:
     #    observed; if a future run shows a different `d*.cloudfront.net` host,
     #    broaden this from a fixed name to a pattern rather than re-litigating
     #    the same root cause.
+    #    That happened on 2026-10-12 (garmin-ai-coach PR #263): the build-python3.14
+    #    layers came from `d5l0dvt14r5h8.cloudfront.net`. Broadened as planned. Cilium's
+    #    `*` does not cross a dot, so this admits single-label CloudFront distribution
+    #    hosts on 443 only.
     - toFQDNs:
         - matchName: "public.ecr.aws"
-        - matchName: "d2glxqk2uabbnd.cloudfront.net"
+        - matchPattern: "*.cloudfront.net"
         - matchPattern: "*.dkr.ecr.us-west-2.amazonaws.com"
         - matchName: "api.ecr.us-west-2.amazonaws.com"
       toPorts:

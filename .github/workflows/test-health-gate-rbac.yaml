@@ -42,32 +42,45 @@ jobs:
           chmod 600 "${KCFG}"
           printf 'KUBECONFIG=%s\n' "${KCFG}" >> "$GITHUB_ENV"
 
-      - name: Verify read access - list Kustomizations cluster-wide
-        run: kubectl get kustomizations.kustomize.toolkit.fluxcd.io -A
-
-      - name: Verify read access - list HelmReleases cluster-wide
-        run: kubectl get helmreleases.helm.toolkit.fluxcd.io -A
-
-      - name: Verify least-privilege boundary - mutating call must be Forbidden
+      - name: Verify reads for Flux source resources
         run: |
           set -euo pipefail
-          set +e
-          OUTPUT=$(kubectl patch kustomization k8s-cluster-ci -n flux-system \
-            --type=merge -p '{"metadata":{"labels":{"gsd-test":"true"}}}' 2>&1)
-          STATUS=$?
-          set -e
+          for resource in \
+            gitrepositories.source.toolkit.fluxcd.io \
+            ocirepositories.source.toolkit.fluxcd.io \
+            helmrepositories.source.toolkit.fluxcd.io \
+            helmcharts.source.toolkit.fluxcd.io; do
+            kubectl get "$resource" -A -o name >/dev/null
+            for verb in get list watch; do
+              answer=$(kubectl auth can-i "$verb" "$resource" --all-namespaces)
+              test "$answer" = "yes"
+            done
+          done
+          kubectl get kustomizations.kustomize.toolkit.fluxcd.io -A -o name >/dev/null
+          kubectl get helmreleases.helm.toolkit.fluxcd.io -A -o name >/dev/null
 
-          if [ "$STATUS" -eq 0 ]; then
-            echo "HARD FAILURE: mutating call unexpectedly succeeded - RBAC boundary is not enforced"
-            echo "$OUTPUT"
-            exit 1
-          fi
+      - name: Verify Secret and ConfigMap reads are denied
+        run: |
+          set -euo pipefail
+          for resource in secrets configmaps; do
+            for verb in get list watch; do
+              answer=$(kubectl auth can-i "$verb" "$resource" --all-namespaces)
+              test "$answer" = "no"
+            done
+          done
 
-          if echo "$OUTPUT" | grep -qi "forbidden"; then
-            echo "PASS: mutating call correctly rejected as Forbidden"
-            echo "$OUTPUT"
-          else
-            echo "HARD FAILURE: mutating call failed, but NOT with Forbidden - unexpected error"
-            echo "$OUTPUT"
-            exit 1
-          fi
+      - name: Verify source and Flux resource mutations are denied
+        run: |
+          set -euo pipefail
+          for resource in \
+            kustomizations.kustomize.toolkit.fluxcd.io \
+            helmreleases.helm.toolkit.fluxcd.io \
+            gitrepositories.source.toolkit.fluxcd.io \
+            ocirepositories.source.toolkit.fluxcd.io \
+            helmrepositories.source.toolkit.fluxcd.io \
+            helmcharts.source.toolkit.fluxcd.io; do
+            for verb in create update patch delete; do
+              answer=$(kubectl auth can-i "$verb" "$resource" --all-namespaces)
+              test "$answer" = "no"
+            done
+          done

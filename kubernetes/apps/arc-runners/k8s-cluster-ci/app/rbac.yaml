@@ -1,4 +1,7 @@
 ---
+# yamllint disable rule:line-length
+# yaml-language-server: $schema=https://kubernetes-schemas.pages.dev/rbac.authorization.k8s.io/clusterrole_v1.json
+# yamllint enable rule:line-length
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -15,6 +18,13 @@ rules:
     verbs: ["get", "list", "watch"]
   - apiGroups: ["helm.toolkit.fluxcd.io"]
     resources: ["helmreleases"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["source.toolkit.fluxcd.io"]
+    resources:
+      - gitrepositories
+      - ocirepositories
+      - helmrepositories
+      - helmcharts
     verbs: ["get", "list", "watch"]
   - apiGroups: ["", "events.k8s.io"]
     resources: ["events"]

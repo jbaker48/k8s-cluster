@@ -3,34 +3,40 @@
   "extends": [
     "config:recommended",
     "docker:enableMajor",
-    ":disableRateLimiting",
     ":dependencyDashboard",
     ":semanticCommits",
-    ":automergeBranch"
+    "helpers:pinGitHubActionDigests"
   ],
   "dependencyDashboard": true,
   "dependencyDashboardTitle": "Renovate Dashboard 🤖",
+  // The AI-review pipeline is the sole auto-merge owner; see docs/sre-agent/AUTOMERGE-OWNER.md.
+  "automerge": false,
   "suppressNotifications": ["prEditedNotification", "prIgnoreNotification"],
   "rebaseWhen": "conflicted",
+  // The weekend schedule plus disabled rate limiting caused update bursts.
+  "prConcurrentLimit": 10,
+  "prHourlyLimit": 2,
   "schedule": ["every weekend"],
+  // Missing release timestamps must not hold updates forever; Renovate silently stalled for five months before (k8s-ykh).
+  "minimumReleaseAgeBehaviour": "timestamp-optional",
   "ignorePaths": ["**/*.sops.*"],
   "flux": {
-    "fileMatch": ["(^|/)kubernetes/.+\\.ya?ml(?:\\.j2)?$"]
+    "managerFilePatterns": ["/(^|/)kubernetes/.+\\.ya?ml(?:\\.j2)?$/"]
   },
   "helm-values": {
-    "fileMatch": ["(^|/)kubernetes/.+\\.ya?ml(?:\\.j2)?$"]
+    "managerFilePatterns": ["/(^|/)kubernetes/.+\\.ya?ml(?:\\.j2)?$/"]
   },
   "helmfile": {
-    "fileMatch": ["(^|/)helmfile\\.ya?ml(?:\\.j2)?$"]
+    "managerFilePatterns": ["/(^|/)helmfile\\.ya?ml(?:\\.j2)?$/"]
   },
   "kubernetes": {
-    "fileMatch": ["(^|/)kubernetes/.+\\.ya?ml(?:\\.j2)?$"]
+    "managerFilePatterns": ["/(^|/)kubernetes/.+\\.ya?ml(?:\\.j2)?$/"]
   },
   "kustomize": {
-    "fileMatch": ["(^|/)kustomization\\.ya?ml(?:\\.j2)?$"]
+    "managerFilePatterns": ["/(^|/)kustomization\\.ya?ml(?:\\.j2)?$/"]
   },
   "pip_requirements": {
-    "fileMatch": ["(^|/)[\\w-]*requirements(-\\w+)?\\.(txt|pip)(?:\\.j2)?$"]
+    "managerFilePatterns": ["/(^|/)[\\w-]*requirements(-\\w+)?\\.(txt|pip)(?:\\.j2)?$/"]
   },
   // commit message topics
   "commitMessageTopic": "{{depName}}",
@@ -38,20 +44,58 @@
   "commitMessageSuffix": "",
   // package rules
   "packageRules": [
-    // automerge
+    // Release age
     {
-      "description": ["Auto merge Github Actions"],
-      "matchManagers": ["github-actions"],
-      "automerge": true,
-      "automergeType": "branch",
-      "ignoreTests": true,
-      "matchUpdateTypes": ["minor", "patch"]
+      "description": "Wait three days before major, minor, or patch updates.",
+      "matchUpdateTypes": ["major", "minor", "patch"],
+      "minimumReleaseAge": "3 days"
+    },
+    // Manual-only upgrades complement the deterministic exclusion gate.
+    {
+      "description": "Talos package updates require dashboard approval and complement .github/exclusion-gate.yaml; the deterministic gate remains authoritative.",
+      "matchPackageNames": ["/siderolabs\\//"],
+      "dependencyDashboardApproval": true,
+      "automerge": false
+    },
+    {
+      "description": "Talos bootstrap updates require dashboard approval and complement .github/exclusion-gate.yaml; the deterministic gate remains authoritative.",
+      "matchFileNames": ["kubernetes/bootstrap/talos/**"],
+      "dependencyDashboardApproval": true,
+      "automerge": false
+    },
+    {
+      "description": "Kubernetes component updates require dashboard approval and complement .github/exclusion-gate.yaml; the deterministic gate remains authoritative.",
+      "matchPackageNames": ["/(^|/)kube(let|-apiserver|-controller-manager|-scheduler|-proxy|ctl)$/"],
+      "dependencyDashboardApproval": true,
+      "automerge": false
+    },
+    {
+      "description": "Cilium package updates require dashboard approval and complement .github/exclusion-gate.yaml; the deterministic gate remains authoritative.",
+      "matchPackageNames": ["/cilium/"],
+      "dependencyDashboardApproval": true,
+      "automerge": false
+    },
+    {
+      "description": "Cilium bootstrap and Flux updates require dashboard approval and complement .github/exclusion-gate.yaml; the deterministic gate remains authoritative.",
+      "matchFileNames": [
+        "kubernetes/apps/kube-system/cilium/**",
+        "kubernetes/flux/repositories/helm/cilium.yaml"
+      ],
+      "dependencyDashboardApproval": true,
+      "automerge": false
+    },
+    {
+      "description": "Rook-Ceph updates require dashboard approval before a PR opens (not an owner-identity check).",
+      "matchDatasources": ["helm"],
+      "matchPackageNames": ["rook-ceph", "rook-ceph-cluster"],
+      "dependencyDashboardApproval": true,
+      "automerge": false
     },
     // groups
     {
-      "description": ["Flux Group"],
+      "description": "Group Flux dependencies.",
       "groupName": "Flux",
-      "matchPackagePatterns": ["fluxcd"],
+      "matchPackageNames": ["/fluxcd/"],
       "matchDatasources": ["docker", "github-tags"],
       "versioning": "semver",
       "group": {
@@ -60,17 +104,34 @@
       "separateMinorPatch": true
     },
     {
-      "description": ["Talos Group"],
+      "description": "Group Talos images.",
       "groupName": "Talos",
-      "matchPackagePatterns": [
-        "siderolabs/talosctl",
-        "siderolabs/installer"
+      "matchPackageNames": [
+        "/siderolabs/talosctl/",
+        "/siderolabs/installer/"
       ],
       "matchDatasources": ["docker"],
       "group": {
         "commitMessageTopic": "{{{groupName}}} group"
       },
       "separateMinorPatch": true
+    },
+    {
+      "description": "Group the bootstrap Cilium chart and Flux HelmRelease together.",
+      "groupName": "Cilium",
+      "matchPackageNames": ["/cilium/"],
+      "group": {
+        "commitMessageTopic": "{{{groupName}}} group"
+      }
+    },
+    {
+      "description": "Group the Rook-Ceph operator and cluster charts in lockstep.",
+      "groupName": "Rook-Ceph",
+      "matchDatasources": ["helm"],
+      "matchPackageNames": ["rook-ceph", "rook-ceph-cluster"],
+      "group": {
+        "commitMessageTopic": "{{{groupName}}} group"
+      }
     },
     // commit message topics
     {
@@ -191,7 +252,7 @@
     {
       "customType": "regex",
       "description": ["Process custom dependencies"],
-      "fileMatch": ["(^|/)kubernetes/.+\\.ya?ml(?:\\.j2)?$"],
+      "managerFilePatterns": ["/(^|/)kubernetes/.+\\.ya?ml(?:\\.j2)?$/"],
       "matchStrings": [
         // # renovate: datasource=helm depName=cilium repository=https://helm.cilium.io
         // version: 1.15.1
@@ -201,33 +262,10 @@
     },
     {
       "customType": "regex",
-      // ARC runner image. This lives inside a Flux HelmRelease's inline
-      // spec.values.template, which the flux/helm-values/kubernetes managers do
-      // not extract, so it was never tracked and silently went stale. GitHub's
-      // Actions service enforces a rolling MINIMUM runner version; once the pin
-      // drops below it the runner exits 7 (RunnerVersionDeprecated) and ARC
-      // 0.14.2 wedges the AutoscalingRunnerSet permanently in phase Outdated,
-      // taking all self-hosted CI down silently. See upstream #4595/#4596/#4600
-      // and .planning/debug/resolved/arc-k8s-cluster-ci-no-listener.md.
-      //
-      // 39-06: garmin-ci now runs a FORKED runner image
-      // (ghcr.io/falcondev-oss/actions-runner, pinned by tag AND @sha256 digest
-      // per the operator's blocking-checkpoint "adopt-pinned-by-digest" ruling --
-      // see garmin-ci/app/helmrelease.yaml and 39-06-SUMMARY.md in the
-      // garmin-ai-coach repo). An untracked pin here is the exact same failure
-      // class that already took CI down once for the stock image (the incident
-      // this customManager was created to prevent) -- so the second matchStrings
-      // entry below captures BOTH currentValue and currentDigest, keeping the
-      // digest in lockstep with the tag on every bump rather than leaving it to
-      // silently drift out of sync with a newer tag string (which would be a
-      // pin that LOOKS current in the diff but still resolves the old image,
-      // since a digest is authoritative over its accompanying tag). The
-      // pre-existing stock-runner entry is left unchanged below: it is
-      // currently a live matcher against no file in this repo now that
-      // garmin-ci has moved to the fork, kept in case a future scale set
-      // reverts to the stock image (39-CACHE-REVERT.md's D-14 escape hatch).
+      // ARC runner images are pinned inside Flux HelmRelease inline values.
+      // Tracking rationale and incident references: docs/sre-agent/AUTOMERGE-OWNER.md#arc-runner-image-tracking.
       "description": ["ARC runner image pinned inside Flux HelmRelease inline values"],
-      "fileMatch": ["(^|/)kubernetes/apps/arc-runners/.+\\.ya?ml(?:\\.j2)?$"],
+      "managerFilePatterns": ["/(^|/)kubernetes/apps/arc-runners/.+\\.ya?ml(?:\\.j2)?$/"],
       "matchStrings": [
         "image:\\s+(?<depName>ghcr\\.io/actions/actions-runner):(?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)",
         "image:\\s+(?<depName>ghcr\\.io/falcondev-oss/actions-runner):(?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)@(?<currentDigest>sha256:[a-f0-9]+)"

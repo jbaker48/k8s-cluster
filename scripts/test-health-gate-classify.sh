@@ -7,12 +7,95 @@ FIXTURE_DIR="$ROOT/.github/health-gate/fixtures"
 TMP_DIR=$(mktemp -d)
 trap 'if [ -d "$TMP_DIR/local-parent" ]; then git -C "$ROOT" worktree remove --force "$TMP_DIR/local-parent" >/dev/null 2>&1 || true; fi; rm -rf "$TMP_DIR"' EXIT
 
-for tool in yq jq python3; do
+for tool in jq python3; do
   command -v "$tool" >/dev/null 2>&1 || {
     printf 'required tool missing: %s\n' "$tool" >&2
     exit 2
   }
 done
+
+PRODUCER_VERSIONS=$(python3 -B - "$ROOT/scripts/health-gate-attest.py" <<'PYTHON'
+import ast
+import pathlib
+import sys
+
+tree = ast.parse(pathlib.Path(sys.argv[1]).read_text())
+for node in tree.body:
+    if isinstance(node, ast.Assign) and any(
+        isinstance(target, ast.Name) and target.id == "VERSIONS"
+        for target in node.targets
+    ):
+        versions = ast.literal_eval(node.value)
+        if set(versions) != {"flux", "kustomize", "yq"}:
+            raise SystemExit("producer VERSIONS must pin flux, kustomize, and yq")
+        for name in ("flux", "kustomize", "yq"):
+            print(f"{name}={versions[name]}")
+        break
+else:
+    raise SystemExit("producer VERSIONS assignment not found")
+PYTHON
+)
+PRODUCER_FLUX_VERSION=$(printf '%s\n' "$PRODUCER_VERSIONS" | sed -n 's/^flux=//p')
+PRODUCER_KUSTOMIZE_VERSION=$(printf '%s\n' "$PRODUCER_VERSIONS" | sed -n 's/^kustomize=//p')
+PRODUCER_YQ_VERSION=$(printf '%s\n' "$PRODUCER_VERSIONS" | sed -n 's/^yq=//p')
+
+version_from_output() {
+  awk 'NR == 1 { print $NF; exit }'
+}
+
+current_tool_version() {
+  local tool=$1
+  local raw
+  case "$tool" in
+    flux) raw=$(flux --version 2>/dev/null) || return 1 ;;
+    kustomize) raw=$(kustomize version 2>/dev/null) || return 1 ;;
+    yq) raw=$(yq --version 2>/dev/null) || return 1 ;;
+    *) return 1 ;;
+  esac
+  printf '%s\n' "$raw" | version_from_output
+}
+
+if ! command -v mise >/dev/null 2>&1; then
+  got=$(current_tool_version flux || printf 'unavailable')
+  printf 'pinned render tools unavailable: flux want %s got %s\n' \
+    "$PRODUCER_FLUX_VERSION" "$got" >&2
+  exit 2
+fi
+
+RENDER_TOOL_REFS=(
+  "aqua:fluxcd/flux2@$PRODUCER_FLUX_VERSION"
+  "aqua:kubernetes-sigs/kustomize@$PRODUCER_KUSTOMIZE_VERSION"
+  "aqua:mikefarah/yq@$PRODUCER_YQ_VERSION"
+)
+for tool in flux kustomize yq; do
+  case "$tool" in
+    flux) want=$PRODUCER_FLUX_VERSION; spec=${RENDER_TOOL_REFS[0]} ;;
+    kustomize) want=$PRODUCER_KUSTOMIZE_VERSION; spec=${RENDER_TOOL_REFS[1]} ;;
+    yq) want=$PRODUCER_YQ_VERSION; spec=${RENDER_TOOL_REFS[2]} ;;
+  esac
+  version_arg=--version
+  [ "$tool" != kustomize ] || version_arg=version
+  if raw=$(mise exec -q -C "$TMP_DIR" "$spec" -- \
+      "$tool" "$version_arg" 2>/dev/null); then
+    got=$(printf '%s\n' "$raw" | version_from_output)
+  else
+    got=$(current_tool_version "$tool" || printf 'unavailable')
+  fi
+  if [ "$got" != "$want" ]; then
+    printf 'pinned render tools unavailable: %s want %s got %s\n' \
+      "$tool" "$want" "$got" >&2
+    exit 2
+  fi
+done
+
+if ! PINNED_PATH=$(mise exec -q -C "$TMP_DIR" \
+    "${RENDER_TOOL_REFS[@]}" -- printenv PATH 2>/dev/null) || [ -z "$PINNED_PATH" ]; then
+  printf 'pinned render tools unavailable: flux want %s got unavailable (mise PATH setup failed)\n' \
+    "$PRODUCER_FLUX_VERSION" >&2
+  exit 2
+fi
+PATH="$PINNED_PATH"
+export PATH
 
 extract_step() {
   local step_id=$1
@@ -29,6 +112,42 @@ extract_step() {
     return 1
   fi
 }
+
+extract_step bootstrap "$TMP_DIR/bootstrap.sh"
+workflow_pin() {
+  local variable=$1
+  awk -v key="$variable" '
+    $0 ~ "^[[:space:]]*" key "=[[:space:]]*\"" {
+      line = $0
+      sub(/^[^\"]*\"/, "", line)
+      sub(/\".*$/, "", line)
+      value = line
+      count++
+    }
+    END {
+      if (count != 1) exit 1
+      print value
+    }
+  ' "$TMP_DIR/bootstrap.sh"
+}
+for tool in flux kustomize yq; do
+  case "$tool" in
+    flux) variable=FLUX_VERSION; producer_version=$PRODUCER_FLUX_VERSION ;;
+    kustomize) variable=KUSTOMIZE_VERSION; producer_version=$PRODUCER_KUSTOMIZE_VERSION ;;
+    yq) variable=YQ_VERSION; producer_version=$PRODUCER_YQ_VERSION ;;
+  esac
+  if ! workflow_version=$(workflow_pin "$variable"); then
+    printf 'expected one %s pin in workflow bootstrap step\n' "$variable" >&2
+    exit 2
+  fi
+  if [ "$workflow_version" != "$producer_version" ]; then
+    printf 'workflow/producer render version mismatch: %s workflow=%s producer=%s\n' \
+      "$tool" "$workflow_version" "$producer_version" >&2
+    exit 2
+  fi
+done
+printf 'render tool pins match workflow and producer: flux=%s kustomize=%s yq=%s\n' \
+  "$PRODUCER_FLUX_VERSION" "$PRODUCER_KUSTOMIZE_VERSION" "$PRODUCER_YQ_VERSION"
 
 extract_step poll "$TMP_DIR/poll.sh"
 awk '
@@ -51,7 +170,7 @@ run_local_render_fixture() {
   target_sha=$(git -C "$ROOT" rev-parse HEAD)
   parent_sha=$(git -C "$ROOT" rev-parse "$target_sha^")
   git -C "$ROOT" worktree add --detach "$TMP_DIR/local-parent" "$parent_sha" >/dev/null 2>&1
-python3 - "$TMP_DIR/local-snapshot.json" "$target_sha" <<'PYTHON'
+python3 -B - "$TMP_DIR/local-snapshot.json" "$target_sha" <<'PYTHON'
 import json
 import pathlib
 import sys
@@ -81,7 +200,7 @@ pathlib.Path(sys.argv[1]).write_text(json.dumps({
     "main_after": sys.argv[2], "superseded": False,
 }, separators=(",", ":")))
 PYTHON
-  python3 "$ROOT/scripts/health-gate-attest.py" \
+  python3 -B "$ROOT/scripts/health-gate-attest.py" \
     --target-sha "$target_sha" \
     --parent-sha "$parent_sha" \
     --snapshots "$TMP_DIR/local-snapshot.json" \
@@ -248,7 +367,7 @@ for fixture in "$FIXTURE_DIR"/*.json; do
   if jq -e 'has("preflight_cases")' "$fixture" >/dev/null; then
     target_sha=$(jq -r '.target_sha' "$fixture")
     parent_sha=$(jq -r '.parent_sha' "$fixture")
-    python3 "$ROOT/scripts/health-gate-attest.py" \
+    python3 -B "$ROOT/scripts/health-gate-attest.py" \
       --target-sha "$target_sha" \
       --parent-sha "$parent_sha" \
       --preflight-fixture "$fixture" > "$proof_file"
@@ -275,7 +394,7 @@ for fixture in "$FIXTURE_DIR"/*.json; do
     ' "$effective_fixture" > "$TMP_DIR/$name.producer-input.json"
     target_sha=$(jq -r '.target_sha' "$effective_fixture")
     parent_sha=$(jq -r '.parent_sha' "$effective_fixture")
-    python3 "$ROOT/scripts/health-gate-attest.py" \
+    python3 -B "$ROOT/scripts/health-gate-attest.py" \
       --target-sha "$target_sha" \
       --parent-sha "$parent_sha" \
       --fixture-input "$TMP_DIR/$name.producer-input.json" > "$proof_file"
@@ -432,6 +551,9 @@ case "$tool" in
     trace sleep
     ;;
   python3)
+    if [ "${1:-}" = -B ]; then
+      shift
+    fi
     if [ "${1:-}" = scripts/health-gate-attest.py ]; then
       response=$(next_response "$POLL_PRODUCER_RESPONSES" producer-count)
       case "$response" in
@@ -478,7 +600,7 @@ for fixture in "$FIXTURE_DIR"/*.json; do
     jq -c '.producer_input' "$fixture" > "$poll_dir/producer-input.json"
     target_sha=$(jq -r '.target_sha' "$fixture")
     parent_sha=$(jq -r '.parent_sha' "$fixture")
-    "$REAL_PYTHON3" "$ROOT/scripts/health-gate-attest.py" \
+    "$REAL_PYTHON3" -B "$ROOT/scripts/health-gate-attest.py" \
       --target-sha "$target_sha" --parent-sha "$parent_sha" \
       --fixture-input "$poll_dir/producer-input.json" > "$poll_proof"
   else

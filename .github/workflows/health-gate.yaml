@@ -53,8 +53,10 @@ jobs:
           echo "$(cat /tmp/kubectl.sha256)  /tmp/kubectl" | sha256sum -c -
           sudo install -m 755 /tmp/kubectl /usr/local/bin/kubectl
 
-          FLUX_VERSION="2.8.5"
-          FLUX_SHA256="63c178ba938a5443265b2ce02691c005acf4ef6188d4dbb9b9d87333558948c4"
+          # Version source: live flux2 chart 2.17.2 runs distribution 2.7.5 (owner observation, 2026-10-11).
+          FLUX_VERSION="2.7.5"
+          # SHA source: official Flux v2.7.5 flux_2.7.5_checksums.txt linux_amd64 entry.
+          FLUX_SHA256="1e92141e8498289e4b27411385aeb18396053176cf297b0cb99abd6ca8293e75"
           FLUX_URL="https://github.com/fluxcd/flux2/releases/download/v${FLUX_VERSION}"
           FLUX_ARCHIVE="flux_${FLUX_VERSION}_linux_amd64.tar.gz"
           curl -fsSL -o /tmp/flux.tar.gz "$FLUX_URL/$FLUX_ARCHIVE"
@@ -62,6 +64,7 @@ jobs:
           tar -xzf /tmp/flux.tar.gz -C /tmp flux
           sudo install -m 755 /tmp/flux /usr/local/bin/flux
 
+          # Standalone Kustomize renders only synthetic preflight fixtures; production desired state uses Flux build.
           KUSTOMIZE_VERSION="v5.8.1"
           KUSTOMIZE_SHA256="029a7f0f4e1932c52a0476cf02a0fd855c0bb85694b82c338fc648dcb53a819d"
           KUSTOMIZE_URL="https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize"
@@ -567,7 +570,7 @@ jobs:
             main_before="$4"
             main_after="$5"
             main_superseded="$6"
-            python3 - "$before_dir" "$after_dir" "$output" \
+            python3 -B - "$before_dir" "$after_dir" "$output" \
               "$main_before" "$main_after" "$main_superseded" <<'PYTHON'
           import json
           import pathlib
@@ -628,7 +631,7 @@ jobs:
               sleep "$POLL_INTERVAL_SECONDS"
               continue
             fi
-            if ! python3 scripts/health-gate-attest.py \
+            if ! python3 -B scripts/health-gate-attest.py \
               --target-sha "$TARGET_SHA" --parent-sha "$PARENT_SHA" \
               --snapshots "$PRIVATE/pre-render-snapshots.json" \
               --repo-root "$GITHUB_WORKSPACE" --parent-root "$PARENT_ROOT" \
@@ -660,7 +663,7 @@ jobs:
               sleep "$POLL_INTERVAL_SECONDS"
               continue
             fi
-            if ! python3 scripts/health-gate-attest.py \
+            if ! python3 -B scripts/health-gate-attest.py \
               --target-sha "$TARGET_SHA" --parent-sha "$PARENT_SHA" \
               --snapshots "$PRIVATE/sample.json" \
               --repo-root "$GITHUB_WORKSPACE" --parent-root "$PARENT_ROOT" \

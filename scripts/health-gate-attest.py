@@ -14,7 +14,9 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-VERSIONS = {"flux": "2.8.5", "kustomize": "v5.8.1", "yq": "v4.52.5"}
+# Flux 2.7.5 matches the live flux2 distribution. Standalone Kustomize only
+# renders synthetic preflight fixtures; production desired-state rendering uses `flux build`.
+VERSIONS = {"flux": "2.7.5", "kustomize": "v5.8.1", "yq": "v4.52.5"}
 VERSION_COMMANDS = {
     "flux": ["flux", "--version"],
     "kustomize": ["kustomize", "version"],

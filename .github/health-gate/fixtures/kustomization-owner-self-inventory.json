@@ -1,0 +1,27 @@
+{
+  "name": "kustomization-owner-self-inventory",
+  "base_fixture": "stable-supported-target",
+  "proof_mutations": [
+    {
+      "path": ["proof", "observed", "kustomizations", 1, "status", "inventory_ids"],
+      "value": []
+    },
+    {
+      "path": ["proof", "observed", "kustomizations", 2, "metadata", "labels", "kustomize.toolkit.fluxcd.io/name"],
+      "value": "app-owner"
+    },
+    {
+      "path": ["proof", "observed", "kustomizations", 2, "status", "inventory_ids"],
+      "value": [
+        "apps_demo_helm.toolkit.fluxcd.io_HelmRelease",
+        "flux-system_app-owner_kustomize.toolkit.fluxcd.io_Kustomization"
+      ]
+    }
+  ],
+  "expected": {
+    "all_ready": false,
+    "diagnostic_codes": ["kustomization-owner-inventory-invalid"],
+    "sample_valid": false,
+    "superseded": false
+  }
+}

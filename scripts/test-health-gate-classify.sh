@@ -190,6 +190,9 @@ required=(
   kustomization-owner-inventory-wrong-parent
   kustomization-owner-inventory-multiple-parents
   kustomization-owner-suspended-parent
+  kustomization-owner-self-inventory
+  kustomization-live-metadata-mismatch
+  candidate-wrong-sole-inventory-holder
   unknown-reconciling-condition
 )
 
@@ -265,7 +268,11 @@ for fixture in "$FIXTURE_DIR"/*.json; do
   elif jq -e '.local_render_fixture == true' "$fixture" >/dev/null; then
     run_local_render_fixture "$fixture" "$proof_file"
   elif jq -e 'has("producer_input")' "$effective_fixture" >/dev/null; then
-    jq -c '.producer_input' "$effective_fixture" > "$TMP_DIR/$name.producer-input.json"
+    jq -c '
+      .producer_input as $input
+      | reduce (.producer_mutations // [])[] as $mutation
+          ($input; setpath($mutation.path; $mutation.value))
+    ' "$effective_fixture" > "$TMP_DIR/$name.producer-input.json"
     target_sha=$(jq -r '.target_sha' "$effective_fixture")
     parent_sha=$(jq -r '.parent_sha' "$effective_fixture")
     python3 "$ROOT/scripts/health-gate-attest.py" \

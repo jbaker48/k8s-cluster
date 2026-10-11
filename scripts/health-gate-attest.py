@@ -773,6 +773,8 @@ def attest(target: list[dict[str, Any]], parent: list[dict[str, Any]], snapshot:
             normalized_ks_spec(desired.get("spec") or {})
         ):
             reason = "kustomization-spec-mismatch"
+        elif metadata_fingerprint(current) != metadata_fingerprint(desired):
+            reason = "kustomization-metadata-mismatch"
         elif ((desired.get("spec") or {}).get("sourceRef") or {}).get("kind") != "GitRepository" or (
             ((desired.get("spec") or {}).get("sourceRef") or {}).get("name") != "home-kubernetes"
             or ((desired.get("spec") or {}).get("sourceRef") or {}).get("namespace", ns) != "flux-system"
@@ -1081,23 +1083,33 @@ def attest(target: list[dict[str, Any]], parent: list[dict[str, Any]], snapshot:
             for proof in ks_attestations
         )
         inventory_id = f"{ident[0]}_{ident[1]}_helm.toolkit.fluxcd.io_HelmRelease"
-        inventory_owners = sum(
-            1 for candidate_owner in live["kustomizations"]
+        inventory_holders = [
+            candidate_owner for candidate_owner in live["kustomizations"]
             if inventory_id in [
                 item.get("id", "")
                 for item in (((candidate_owner.get("status") or {}).get("inventory") or {}).get("entries") or [])
                 if isinstance(item, dict)
             ]
+        ]
+        inventory_owners = len(inventory_holders)
+        inventory_owned_by_labelled_owner = (
+            inventory_owners == 1 and object_key(inventory_holders[0]) == owner_ident
         )
         ownership_current = (
             owner is not None
             and desired_owner is not None
             and owner_attested
             and (owner.get("spec") or {}).get("suspend") is not True
-            and inventory_owners == 1
+            and inventory_owned_by_labelled_owner
             and canonical(normalized_ks_spec(owner.get("spec") or {}))
             == canonical(normalized_ks_spec(desired_owner.get("spec") or {}))
+            and metadata_fingerprint(owner) == metadata_fingerprint(desired_owner)
         )
+        if terminal and attempt_current and not inventory_owned_by_labelled_owner:
+            diagnostics.append({
+                "kind": "HelmRelease", "namespace": ident[0], "name": ident[1],
+                "code": "owner-inventory-mismatch", "reason": "owner-inventory-mismatch",
+            })
 
         owner_conditions = current_conditions(owner) if owner else None
         owner_conditions = owner_conditions or []

@@ -649,7 +649,11 @@
         "kind": "Kustomization",
         "metadata": {
           "name": "app-owner",
-          "namespace": "flux-system"
+          "namespace": "flux-system",
+          "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "cluster-apps",
+            "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+          }
         },
         "spec": {
           "path": "./kubernetes/apps/demo/app",

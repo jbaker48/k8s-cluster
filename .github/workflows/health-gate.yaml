@@ -695,8 +695,82 @@ jobs:
           POLL_WALL_EXPIRED=false
           POLL_LAST_CALL_TIMED_OUT=false
           LAST_CLASSIFICATION_COMPLETED=false
+          FLUX_UNHEALTHY=false
+          FLUX_OBJECTS='[]'
+          FLUX_EVIDENCE=unavailable
+          FLUX_SCOPE=unavailable
+          FLUX_EVIDENCE_TIME=''
+          FLUX_STATE_FILE="$PRIVATE/flux-notification.json"
+          SCOPE_FILE="$PRIVATE/notification-scope.json"
+
+          write_flux_state() {
+            jq -cn \
+              --arg evidence "$FLUX_EVIDENCE" \
+              --arg scope "$FLUX_SCOPE" \
+              --arg evidence_time "$FLUX_EVIDENCE_TIME" \
+              --argjson unhealthy "$FLUX_UNHEALTHY" \
+              --argjson objects "$FLUX_OBJECTS" \
+              '{flux_unhealthy:$unhealthy,flux_unhealthy_objects:$objects,
+                flux_notification_evidence:$evidence,
+                flux_notification_scope:$scope,evidence_time:$evidence_time}' \
+              > "$FLUX_STATE_FILE"
+          }
+
+          publish_flux_outputs() {
+            {
+              echo "flux_unhealthy=$FLUX_UNHEALTHY"
+              echo "flux_unhealthy_objects=$FLUX_OBJECTS"
+              echo "flux_notification_evidence=$FLUX_EVIDENCE"
+              echo "flux_notification_scope=$FLUX_SCOPE"
+              echo "flux_evidence_time=$FLUX_EVIDENCE_TIME"
+            } >> "$GITHUB_OUTPUT"
+          }
+
+          mark_flux_observation_error() {
+            if [ "$FLUX_EVIDENCE" != superseded ]; then
+              if [ "$FLUX_UNHEALTHY" = true ]; then
+                FLUX_EVIDENCE=partial
+              else
+                FLUX_EVIDENCE=unavailable
+              fi
+            fi
+            write_flux_state || true
+            publish_flux_outputs
+          }
+
+          mark_flux_superseded() {
+            FLUX_UNHEALTHY=false
+            FLUX_OBJECTS='[]'
+            FLUX_EVIDENCE=superseded
+            FLUX_EVIDENCE_TIME=''
+            write_flux_state
+            publish_flux_outputs
+          }
 
           record_api_error() {
+            if [ "$POLL_WALL_EXPIRED" = true ] \
+              && [ "$POLL_LAST_CALL_TIMED_OUT" = true ] \
+              && [ "$LAST_CLASSIFICATION_COMPLETED" = true ]; then
+              if LAST_RESULT=$(printf '%s' "$LAST_RESULT" | jq -c \
+                --argjson observed_superseded "$EXTRA_SUPERSEDED" '
+                .
+                | .superseded = ((.superseded == true) or $observed_superseded)
+                | if any(.diagnostics[]?; .code == "poll-deadline-after-timeout") then .
+                  else .diagnostics += [{"kind":"Sample","namespace":"","name":"","code":"poll-deadline-after-timeout","reason":"poll-deadline-after-timeout"}]
+                  end
+              '); then
+                mark_flux_observation_error
+                return
+              fi
+            fi
+            LAST_RESULT=$(printf \
+              '{"target_sha":"%s","all_ready":false,"sample_valid":false,"superseded":%s,"stalled_or_failed":[],"diagnostics":[{"kind":"Sample","namespace":"","name":"","code":"api-error","reason":"api-error"}]}' \
+              "$TARGET_SHA" "$EXTRA_SUPERSEDED")
+            LAST_CLASSIFICATION_COMPLETED=false
+            mark_flux_observation_error
+          }
+
+          record_attestation_error() {
             if [ "$POLL_WALL_EXPIRED" = true ] \
               && [ "$POLL_LAST_CALL_TIMED_OUT" = true ] \
               && [ "$LAST_CLASSIFICATION_COMPLETED" = true ]; then
@@ -788,8 +862,23 @@ jobs:
             LAST_RESULT=$(printf \
               '{"target_sha":"%s","all_ready":false,"sample_valid":false,"superseded":false,"stalled_or_failed":[],"diagnostics":[{"kind":"Sample","namespace":"","name":"","code":"render-cache-unavailable","reason":"render-cache-unavailable"}]}' \
               "$TARGET_SHA")
+          fi
+
+          if run_bounded 10 git diff --name-only --no-renames \
+            "$PARENT_SHA" "$TARGET_SHA" > "$PRIVATE/changed-paths"; then
+            if ! run_bounded 5 jq -Rsc \
+              '{changed_paths:(split("\n") | map(select(length > 0)))}' \
+              "$PRIVATE/changed-paths" > "$SCOPE_FILE"; then
+              printf '{"scope_error":true}\n' > "$SCOPE_FILE"
+            fi
           else
-            while :; do
+            printf '{"scope_error":true}\n' > "$SCOPE_FILE"
+          fi
+          FLUX_SCOPE=unavailable
+          write_flux_state
+          publish_flux_outputs
+
+          while :; do
               if [ "$SECONDS" -ge "$POLL_WALL_DEADLINE" ]; then
                 POLL_WALL_EXPIRED=true
               fi
@@ -818,14 +907,22 @@ jobs:
               MAIN_BEFORE=$(<"$PRIVATE/main-before")
               if [ "$MAIN_BEFORE" != "$TARGET_SHA" ]; then
                 EXTRA_SUPERSEDED=true
+                FLUX_SCOPE=$(jq -r '.flux_notification_scope // "unavailable"' "$FLUX_STATE_FILE")
+                mark_flux_superseded
                 LAST_RESULT=$(printf \
                   '{"target_sha":"%s","all_ready":false,"sample_valid":false,"superseded":true,"stalled_or_failed":[],"diagnostics":[{"kind":"Main","namespace":"","name":"main","code":"superseded","reason":"main-advanced"}]}' \
                   "$TARGET_SHA")
                 break
               fi
 
-              BEFORE_DIR="$PRIVATE/before"
-              AFTER_DIR="$PRIVATE/after"
+              ITERATION_DIR="$PRIVATE/iteration"
+              run_bounded 5 rm -rf "$ITERATION_DIR" || true
+              run_bounded 5 mkdir -p "$ITERATION_DIR" || {
+                record_api_error
+                break
+              }
+              BEFORE_DIR="$ITERATION_DIR/before"
+              AFTER_DIR="$ITERATION_DIR/after"
               if ! collect_snapshot "$BEFORE_DIR"; then
                 record_api_error
                 echo "WARNING: pre-render Kubernetes snapshot failed; retrying"
@@ -839,15 +936,20 @@ jobs:
                 run_bounded "$POLL_INTERVAL_SECONDS" sleep "$POLL_INTERVAL_SECONDS" || true
                 continue
               fi
-              if ! run_bounded 120 python3 -B scripts/health-gate-attest.py \
-                --target-sha "$TARGET_SHA" --parent-sha "$PARENT_SHA" \
-                --snapshots "$PRIVATE/pre-render-snapshots.json" \
-                --render-cache "$RENDER_CACHE" \
-                > "$PRIVATE/prepared-proof.json"; then
-                record_api_error
-                echo "WARNING: pre-render attestation execution failed; retrying"
-                run_bounded "$POLL_INTERVAL_SECONDS" sleep "$POLL_INTERVAL_SECONDS" || true
-                continue
+              PREPARED_READY=false
+              if [ "$HEALTH_GATE_RENDER_STATUS" = ready ] \
+                && [ -s "$RENDER_CACHE" ]; then
+                if ! run_bounded 120 python3 -B scripts/health-gate-attest.py \
+                  --target-sha "$TARGET_SHA" --parent-sha "$PARENT_SHA" \
+                  --snapshots "$PRIVATE/pre-render-snapshots.json" \
+                  --render-cache "$RENDER_CACHE" \
+                  > "$PRIVATE/prepared-proof.json"; then
+                  record_attestation_error
+                  echo "WARNING: pre-render attestation execution failed; retrying"
+                  run_bounded "$POLL_INTERVAL_SECONDS" sleep "$POLL_INTERVAL_SECONDS" || true
+                  continue
+                fi
+                PREPARED_READY=true
               fi
 
               if ! collect_snapshot "$AFTER_DIR"; then
@@ -876,23 +978,57 @@ jobs:
                 run_bounded "$POLL_INTERVAL_SECONDS" sleep "$POLL_INTERVAL_SECONDS" || true
                 continue
               fi
+              if OBSERVED_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ") \
+                && run_bounded 15 python3 -B scripts/health-gate-flux-status.py \
+                  --target-sha "$TARGET_SHA" \
+                  --snapshots "$PRIVATE/sample.json" \
+                  --scope "$SCOPE_FILE" \
+                  --previous "$FLUX_STATE_FILE" \
+                  --observed-at "$OBSERVED_AT" \
+                  > "$PRIVATE/flux-notification-result.json"; then
+                if jq -e '.flux_unhealthy | type == "boolean"' \
+                  "$PRIVATE/flux-notification-result.json" >/dev/null; then
+                  FLUX_UNHEALTHY=$(jq -r '.flux_unhealthy' "$PRIVATE/flux-notification-result.json")
+                  FLUX_OBJECTS=$(jq -c '.flux_unhealthy_objects' "$PRIVATE/flux-notification-result.json")
+                  FLUX_EVIDENCE=$(jq -r '.flux_notification_evidence' "$PRIVATE/flux-notification-result.json")
+                  FLUX_SCOPE=$(jq -r '.flux_notification_scope' "$PRIVATE/flux-notification-result.json")
+                  FLUX_EVIDENCE_TIME=$(jq -r '.evidence_time // ""' "$PRIVATE/flux-notification-result.json")
+                  cp -f "$PRIVATE/flux-notification-result.json" "$FLUX_STATE_FILE"
+                  publish_flux_outputs
+                else
+                  mark_flux_observation_error
+                fi
+              else
+                mark_flux_observation_error
+              fi
+
+              if [ "$HEALTH_GATE_RENDER_STATUS" != ready ] \
+                || [ ! -s "$RENDER_CACHE" ]; then
+                run_bounded "$POLL_INTERVAL_SECONDS" sleep "$POLL_INTERVAL_SECONDS" || true
+                continue
+              fi
+              if [ "$PREPARED_READY" != true ]; then
+                record_attestation_error
+                run_bounded "$POLL_INTERVAL_SECONDS" sleep "$POLL_INTERVAL_SECONDS" || true
+                continue
+              fi
               if ! run_bounded 120 python3 -B scripts/health-gate-attest.py \
                 --target-sha "$TARGET_SHA" --parent-sha "$PARENT_SHA" \
                 --snapshots "$PRIVATE/sample.json" \
                 --render-cache "$RENDER_CACHE" \
                 > "$PRIVATE/proof.json"; then
-                record_api_error
-                echo "WARNING: attestation execution failed; retrying"
+                record_attestation_error
+                echo "WARNING: attestation execution failed; notification polling continues"
                 run_bounded "$POLL_INTERVAL_SECONDS" sleep "$POLL_INTERVAL_SECONDS" || true
                 continue
               fi
               if ! run_bounded 10 jq -c \
                 '{total:.counts.helmreleases_total,
                  supported:.counts.helmreleases_supported,
-                 unsupported:.counts.helmreleases_unsupported,
-                 reason_codes:.counts.reason_codes}' "$PRIVATE/proof.json" \
+                unsupported:.counts.helmreleases_unsupported,
+                reason_codes:.counts.reason_codes}' "$PRIVATE/proof.json" \
                 > "$PRIVATE/counts.json"; then
-                record_api_error
+                record_attestation_error
                 run_bounded "$POLL_INTERVAL_SECONDS" sleep "$POLL_INTERVAL_SECONDS" || true
                 continue
               fi
@@ -905,7 +1041,7 @@ jobs:
                   "$PRIVATE/proof.json" > "$PRIVATE/proof-key.json" \
                 || ! run_bounded 5 cmp -s \
                   "$PRIVATE/prepared-key.json" "$PRIVATE/proof-key.json"; then
-                record_api_error
+                record_attestation_error
                 echo "WARNING: render inputs changed or could not be compared; discarding"
                 run_bounded "$POLL_INTERVAL_SECONDS" sleep "$POLL_INTERVAL_SECONDS" || true
                 continue
@@ -914,7 +1050,7 @@ jobs:
                 --argjson superseded "$EXTRA_SUPERSEDED" \
                 "$JQ_CLASSIFY_WITH_SUPERSEDED" \
                 "$PRIVATE/proof.json" > "$PRIVATE/result.json" 2>"$PRIVATE/jq.err"; then
-                record_api_error
+                record_attestation_error
                 echo "WARNING: sanitized proof could not be classified; retrying"
                 run_bounded "$POLL_INTERVAL_SECONDS" sleep "$POLL_INTERVAL_SECONDS" || true
                 continue
@@ -923,7 +1059,7 @@ jobs:
               LAST_CLASSIFICATION_COMPLETED=true
               if ! run_bounded 10 jq -r '.superseded' "$PRIVATE/result.json" \
                 > "$PRIVATE/superseded"; then
-                record_api_error
+                record_attestation_error
                 run_bounded "$POLL_INTERVAL_SECONDS" sleep "$POLL_INTERVAL_SECONDS" || true
                 continue
               fi
@@ -933,7 +1069,7 @@ jobs:
               fi
               if ! run_bounded 10 jq -r '.all_ready' "$PRIVATE/result.json" \
                 > "$PRIVATE/all-ready"; then
-                record_api_error
+                record_attestation_error
                 run_bounded "$POLL_INTERVAL_SECONDS" sleep "$POLL_INTERVAL_SECONDS" || true
                 continue
               fi
@@ -943,8 +1079,7 @@ jobs:
                 break
               fi
               run_bounded "$POLL_INTERVAL_SECONDS" sleep "$POLL_INTERVAL_SECONDS" || true
-            done
-          fi
+          done
 
           if [ "$OUTCOME" = "healthy" ]; then
             ALL_READY=true
@@ -964,6 +1099,12 @@ jobs:
           if [ "$REVERT_BUCKETS" = "[]" ]; then
             REVERT_BUCKETS='["unscoped"]'
           fi
+          if [ "$FLUX_UNHEALTHY" = true ]; then
+            FLUX_PAGE_STATUS=paging
+          else
+            FLUX_PAGE_STATUS=non-paging
+          fi
+          FLUX_OBJECT_COUNT=$(printf '%s' "$FLUX_OBJECTS" | jq 'length')
           {
             echo "all_ready=$ALL_READY"
             echo "outcome=$OUTCOME"
@@ -971,6 +1112,11 @@ jobs:
             echo "stalled_or_failed=[]"
             echo "revert_buckets=$REVERT_BUCKETS"
             echo "attestation_counts=$LATEST_ATTESTATION_COUNTS"
+            echo "flux_unhealthy=$FLUX_UNHEALTHY"
+            echo "flux_unhealthy_objects=$FLUX_OBJECTS"
+            echo "flux_notification_evidence=$FLUX_EVIDENCE"
+            echo "flux_notification_scope=$FLUX_SCOPE"
+            echo "flux_evidence_time=$FLUX_EVIDENCE_TIME"
           } >> "$GITHUB_OUTPUT"
           {
             echo "diagnostics<<HEALTHGATEEOF"
@@ -982,6 +1128,8 @@ jobs:
             echo ""
             echo "HelmRelease counts and unsupported reason codes:"
             echo "\`$LATEST_ATTESTATION_COUNTS\`."
+            echo ""
+            echo "Flux notification: $FLUX_PAGE_STATUS; scope=$FLUX_SCOPE; evidence=$FLUX_EVIDENCE; objects=$FLUX_OBJECT_COUNT; target=$TARGET_SHA"
           } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
 
       - name: Emit inconclusive notification
@@ -989,34 +1137,51 @@ jobs:
         if: steps.poll.outputs.outcome == 'inconclusive'
         env:
           RESULT: ${{ steps.poll.outputs.diagnostics }}
+          FLUX_UNHEALTHY: ${{ steps.poll.outputs.flux_unhealthy }}
+          FLUX_UNHEALTHY_OBJECTS: ${{ steps.poll.outputs.flux_unhealthy_objects }}
+          FLUX_NOTIFICATION_EVIDENCE: ${{ steps.poll.outputs.flux_notification_evidence }}
+          FLUX_NOTIFICATION_SCOPE: ${{ steps.poll.outputs.flux_notification_scope }}
+          FLUX_EVIDENCE_TIME: ${{ steps.poll.outputs.flux_evidence_time }}
         run: |
           set -euo pipefail
           CODES=$(printf '%s' "$RESULT" | jq -r \
             '[.diagnostics[]?.code] | unique | join(", ")')
-          DETAIL="Health gate could not prove target $GITHUB_SHA;"
-          DETAIL="$DETAIL reasons: ${CODES:-no-sample}."
-          DETAIL="$DETAIL The run is inconclusive; rollback is not triggered."
+          RUN_URL="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
           NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-          kubectl create -f - <<EOF
-          apiVersion: v1
-          kind: Event
-          metadata:
-            name: health-gate-inconclusive-$GITHUB_RUN_ID
-            namespace: flux-system
-          involvedObject:
-            apiVersion: kustomize.toolkit.fluxcd.io/v1
-            kind: Kustomization
-            name: cluster-apps
-            namespace: flux-system
-          reason: HealthGateInconclusive
-          message: "$DETAIL"
-          type: Warning
-          firstTimestamp: "$NOW"
-          lastTimestamp: "$NOW"
-          count: 1
-          source:
-            component: health-gate.yaml
-          EOF
+          EVENT_TYPE=Normal
+          OBJECT_DETAILS=''
+          if [ "${FLUX_UNHEALTHY:-false}" = true ]; then
+            # Robusta 0.35.0 src/robusta/core/triggers/error_event_trigger.py:
+            # WarningEventTrigger.should_fire returns False when type != Warning.
+            EVENT_TYPE=Warning
+            OBJECT_DETAILS=$(printf '%s' "${FLUX_UNHEALTHY_OBJECTS:-[]}" | jq -r \
+              '[.[] | "\(.kind) \(.namespace)/\(.name) generation=\(.generation) \(.condition)=\(.status)(\(.reason))"] | join("; ")')
+            DETAIL=$(jq -nr \
+              --arg target "$GITHUB_SHA" --arg run "$RUN_URL" \
+              --arg scope "${FLUX_NOTIFICATION_SCOPE:-unavailable}" \
+              --arg evidence "${FLUX_NOTIFICATION_EVIDENCE:-unavailable}" \
+              --arg time "${FLUX_EVIDENCE_TIME:-unknown}" \
+              --arg objects "$OBJECT_DETAILS" \
+              '"Health was not proven for target \($target). Flux reports current failure evidence at \($time): \($objects). scope=\($scope); evidence=\($evidence). Run: \($run). No rollback authorized."')
+          else
+            DETAIL=$(jq -nr \
+              --arg target "$GITHUB_SHA" --arg run "$RUN_URL" \
+              --arg scope "${FLUX_NOTIFICATION_SCOPE:-unavailable}" \
+              --arg evidence "${FLUX_NOTIFICATION_EVIDENCE:-unavailable}" \
+              --arg reasons "${CODES:-no-sample}" \
+              '"Health was not proven for target \($target), and no qualifying current Flux failure was observed. notification evidence=\($evidence); scope=\($scope); health-gate reasons=\($reasons). Run: \($run). No rollback authorized."')
+          fi
+          EVENT_JSON=$(jq -cn \
+            --arg name "health-gate-inconclusive-$GITHUB_RUN_ID" \
+            --arg message "$DETAIL" --arg event_type "$EVENT_TYPE" --arg now "$NOW" \
+            '{apiVersion:"v1",kind:"Event",
+              metadata:{name:$name,namespace:"flux-system"},
+              involvedObject:{apiVersion:"kustomize.toolkit.fluxcd.io/v1",
+                kind:"Kustomization",name:"cluster-apps",namespace:"flux-system"},
+              reason:"HealthGateInconclusive",message:$message,type:$event_type,
+              firstTimestamp:$now,lastTimestamp:$now,count:1,
+              source:{component:"health-gate.yaml"}}')
+          printf '%s\n' "$EVENT_JSON" | kubectl create -f -
 
       - name: Exchange revert-bot App token for an authorized revert
         id: app-token
@@ -1155,39 +1320,42 @@ jobs:
         if: failure()
         env:
           POLL_OUTCOME: ${{ steps.poll.outputs.outcome }}
+          FLUX_UNHEALTHY: ${{ steps.poll.outputs.flux_unhealthy }}
+          FLUX_UNHEALTHY_OBJECTS: ${{ steps.poll.outputs.flux_unhealthy_objects }}
+          FLUX_NOTIFICATION_EVIDENCE: ${{ steps.poll.outputs.flux_notification_evidence }}
+          FLUX_NOTIFICATION_SCOPE: ${{ steps.poll.outputs.flux_notification_scope }}
+          FLUX_EVIDENCE_TIME: ${{ steps.poll.outputs.flux_evidence_time }}
         run: |
           set -uo pipefail
-          DETAIL="Health gate failed before reaching a verdict for $GITHUB_SHA;"
-          DETAIL="$DETAIL last poll outcome: ${POLL_OUTCOME:-none}."
-          DETAIL="$DETAIL No rollback was authorized."
+          RUN_URL="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          DETAIL="Health gate failed before reaching a verdict for $GITHUB_SHA; last poll outcome: ${POLL_OUTCOME:-none}. No qualifying current Flux failure was observed. notification evidence=${FLUX_NOTIFICATION_EVIDENCE:-unavailable}; scope=${FLUX_NOTIFICATION_SCOPE:-unavailable}. Run: $RUN_URL. No rollback authorized."
+          if command -v kubectl >/dev/null 2>&1 \
+            && [ -n "${KUBECONFIG:-}" ]; then
+            NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null \
+              || printf '1970-01-01T00:00:00Z')
+            EVENT_TYPE=Normal
+            if [ "${FLUX_UNHEALTHY:-false}" = true ]; then
+              # Backstop reuses confirmed poll evidence and performs no reads.
+              EVENT_TYPE=Warning
+              OBJECT_DETAILS=$(printf '%s' "${FLUX_UNHEALTHY_OBJECTS:-[]}" | jq -r \
+                '[.[] | "\(.kind) \(.namespace)/\(.name) generation=\(.generation) \(.condition)=\(.status)(\(.reason))"] | join("; ")')
+              DETAIL="Health gate failed before reaching a verdict for $GITHUB_SHA; last poll outcome: ${POLL_OUTCOME:-none}. Flux failure evidence at ${FLUX_EVIDENCE_TIME:-unknown}: $OBJECT_DETAILS. scope=${FLUX_NOTIFICATION_SCOPE:-unavailable}; evidence=${FLUX_NOTIFICATION_EVIDENCE:-partial}. Run: $RUN_URL. No rollback authorized."
+            fi
+            EVENT_JSON=$(jq -cn \
+              --arg name "health-gate-inconclusive-backstop-$GITHUB_RUN_ID" \
+              --arg message "$DETAIL" --arg event_type "$EVENT_TYPE" --arg now "$NOW" \
+              '{apiVersion:"v1",kind:"Event",
+                metadata:{name:$name,namespace:"flux-system"},
+                involvedObject:{apiVersion:"kustomize.toolkit.fluxcd.io/v1",
+                  kind:"Kustomization",name:"cluster-apps",namespace:"flux-system"},
+                reason:"HealthGateInconclusive",message:$message,type:$event_type,
+                firstTimestamp:$now,lastTimestamp:$now,count:1,
+                source:{component:"health-gate.yaml"}}')
+            printf '%s\n' "$EVENT_JSON" | kubectl create -f - || true
+          fi
           echo "::error title=Health gate did not reach a verdict::$DETAIL"
           {
             echo "### Health gate did not reach a verdict"
             echo ""
             echo "$DETAIL"
           } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
-          if command -v kubectl >/dev/null 2>&1 \
-            && [ -n "${KUBECONFIG:-}" ]; then
-            NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null \
-              || printf '1970-01-01T00:00:00Z')
-            kubectl create -f - <<EOF || true
-          apiVersion: v1
-          kind: Event
-          metadata:
-            name: health-gate-inconclusive-backstop-$GITHUB_RUN_ID
-            namespace: flux-system
-          involvedObject:
-            apiVersion: kustomize.toolkit.fluxcd.io/v1
-            kind: Kustomization
-            name: cluster-apps
-            namespace: flux-system
-          reason: HealthGateInconclusive
-          message: "$DETAIL"
-          type: Warning
-          firstTimestamp: "$NOW"
-          lastTimestamp: "$NOW"
-          count: 1
-          source:
-            component: health-gate.yaml
-          EOF
-          fi

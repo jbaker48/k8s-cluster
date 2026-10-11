@@ -14,10 +14,15 @@ days for major, minor, and patch releases. `timestamp-optional` avoids holding
 updates forever when a release timestamp is missing; Renovate silently stalled
 for five months before (`k8s-ykh`).
 
-Renovate requires dependency dashboard approval for Talos, Kubernetes, Cilium,
-and Rook-Ceph upgrades. Rook-Ceph is high-risk and owner-only. These approvals
-complement `.github/exclusion-gate.yaml`; that deterministic exclusion remains
-authoritative.
+Dashboard approval only gates Renovate branch and PR creation; it does not
+check the approver's identity or block merging. Talos, Kubernetes-core paths,
+and Cilium are additionally blocked from auto-merge by
+`.github/exclusion-gate.yaml`.
+
+Rook-Ceph is not currently covered by `.github/exclusion-gate.yaml`. Until the
+separately tracked high-risk follow-up adds it, Rook-Ceph PRs rely on the owner
+merging manually before go-live and on AI review and the health gate after
+go-live.
 
 ## ARC runner image tracking
 

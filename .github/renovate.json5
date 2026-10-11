@@ -85,7 +85,7 @@
       "automerge": false
     },
     {
-      "description": "Rook-Ceph is high-risk and owner-only; require dashboard approval.",
+      "description": "Rook-Ceph updates require dashboard approval before a PR opens (not an owner-identity check).",
       "matchDatasources": ["helm"],
       "matchPackageNames": ["rook-ceph", "rook-ceph-cluster"],
       "dependencyDashboardApproval": true,

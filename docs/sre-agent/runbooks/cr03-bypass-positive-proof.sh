@@ -30,7 +30,7 @@
 # USAGE
 #   ./cr03-bypass-positive-proof.sh --dry-run     # print the plan, no writes
 #   ./cr03-bypass-positive-proof.sh               # run the proof
-#   ./cr03-bypass-positive-proof.sh --marker-only # resume at the final commit only
+#   ./cr03-bypass-positive-proof.sh --marker-only # resume after RUN 1; verify labels
 #
 set -euo pipefail
 
@@ -42,6 +42,9 @@ REPO_NAME="k8s-cluster"
 REPO="${REPO_OWNER}/${REPO_NAME}"
 BRANCH="auto-revert/bypass-positive-test"
 LABEL="automated-revert"
+HOLD_LABEL="hold"
+BASELINE_WAIT_TIMEOUT_SECONDS=600
+BASELINE_WAIT_INTERVAL_SECONDS=10
 
 # Repo-root path: matches NONE of the three categories in .github/exclusion-gate.yaml
 # (every glob there is under kubernetes/). Used for the clean baseline run.
@@ -133,10 +136,10 @@ done
 # ---------------------------------------------------------------------------
 banner "CR-03 positive proof — preflight"
 
-for cmd in openssl curl jq; do
+for cmd in openssl curl jq gh; do
     command -v "${cmd}" >/dev/null 2>&1 || die "${cmd} is required but not installed."
 done
-ok "Tooling present: openssl, curl, jq"
+ok "Tooling present: openssl, curl, jq, gh"
 
 # LibreSSL's dgst is fine for RSA-SHA256, but report which flavor is in use so a
 # signature failure is diagnosable.
@@ -303,6 +306,60 @@ expect_2xx() {
     esac
 }
 
+print_label_fallback() {
+    log ""
+    log "Apply both required labels as the owner, then resume at the verdict commit:"
+    log "  ${C}gh pr edit --repo ${REPO} ${PR_NUMBER} --add-label ${LABEL},${HOLD_LABEL}${N}"
+    log "  ${C}$0 --marker-only${N}"
+}
+
+wait_for_baseline_run() {
+    local started_at="${SECONDS}"
+    local elapsed=0
+    local runs matching_runs run_count run_id run_status run_conclusion
+    local remaining wait_seconds
+
+    info "Waiting up to 10 minutes for Exclusion Gate RUN 1 on ${BASELINE_SHA} to complete..."
+    while [ "${elapsed}" -lt "${BASELINE_WAIT_TIMEOUT_SECONDS}" ]; do
+        if ! runs=$(gh run list \
+            --repo "${REPO}" \
+            --workflow "Exclusion Gate" \
+            --commit "${BASELINE_SHA}" \
+            --json databaseId,status,conclusion,headSha,event \
+            --limit 100 2>&1); then
+            die "Could not query Exclusion Gate runs for baseline head SHA ${BASELINE_SHA}: ${runs}"
+        fi
+
+        if ! matching_runs=$(printf '%s\n' "${runs}" | jq -ce --arg sha "${BASELINE_SHA}" \
+            '[.[] | select(.headSha == $sha and .event == "pull_request_target")]'); then
+            die "Could not parse Exclusion Gate run list for baseline head SHA ${BASELINE_SHA}."
+        fi
+        run_count=$(printf '%s' "${matching_runs}" | jq 'length')
+
+        if [ "${run_count}" -gt 0 ]; then
+            run_id=$(printf '%s' "${matching_runs}" | jq -r '.[0].databaseId')
+            run_status=$(printf '%s' "${matching_runs}" | jq -r '.[0].status')
+            run_conclusion=$(printf '%s' "${matching_runs}" | jq -r '.[0].conclusion // "pending"')
+            if [ "${run_status}" = "completed" ]; then
+                [ "${run_conclusion}" = "success" ] \
+                    || die "Exclusion Gate RUN 1 (${run_id}) completed with '${run_conclusion}' for baseline head SHA ${BASELINE_SHA}; refusing to label the PR or commit the verdict marker."
+                ok "Exclusion Gate RUN 1 (${run_id}) completed successfully for baseline head SHA ${BASELINE_SHA}."
+                return 0
+            fi
+        fi
+
+        elapsed=$((SECONDS - started_at))
+        [ "${elapsed}" -lt "${BASELINE_WAIT_TIMEOUT_SECONDS}" ] || break
+        remaining=$((BASELINE_WAIT_TIMEOUT_SECONDS - elapsed))
+        wait_seconds="${BASELINE_WAIT_INTERVAL_SECONDS}"
+        [ "${remaining}" -lt "${wait_seconds}" ] && wait_seconds="${remaining}"
+        sleep "${wait_seconds}"
+        elapsed=$((SECONDS - started_at))
+    done
+
+    die "Timed out after 10 minutes waiting for Exclusion Gate RUN 1 for baseline head SHA ${BASELINE_SHA}; no labels or verdict marker were added. Check Actions and resume only after confirming the baseline run completed."
+}
+
 json_b64_file() { openssl base64 -A; }
 
 # ---------------------------------------------------------------------------
@@ -321,12 +378,13 @@ print_plan() {
     log "5. POST /repos/${REPO}/git/refs                      - create ${BRANCH}"
     log "6. PUT  /repos/${REPO}/contents/${BASELINE_PATH}"
     log "                                                     - commit NON-excluded file"
-    log "7. POST /repos/${REPO}/pulls                         - open PR (as the App)"
+    log "7. POST /repos/${REPO}/pulls                         - open a DRAFT PR as the App"
     log "         => RUN 1 fires: clean baseline, NOT the verdict"
     log "8. GET  /repos/${REPO}/pulls/{n}                     - assert author is ${EXPECTED_AUTHOR} / Bot"
-    log "9. POST /repos/${REPO}/issues/{n}/labels             - add '${LABEL}'"
+    log "9. Wait (up to 10 minutes) for Exclusion Gate RUN 1 on the baseline head SHA to succeed"
+    log "10. POST /repos/${REPO}/issues/{n}/labels            - add '${LABEL}' and '${HOLD_LABEL}'"
     log "         (no retrigger: bare pull_request_target does not include 'labeled')"
-    log "10. PUT /repos/${REPO}/contents/${MARKER_PATH}"
+    log "11. PUT /repos/${REPO}/contents/${MARKER_PATH}"
     log "                                                     - commit EXCLUDED file"
     log "         => RUN 2 fires via synchronize: THIS IS THE VERDICT"
     log ""
@@ -338,6 +396,10 @@ if [ "${DRY_RUN}" = true ] && [ "${HAVE_CREDS}" = false ]; then
     print_plan
     banner "DRY RUN COMPLETE (credentials not verified)"
     exit 0
+fi
+
+if ! gh auth status --hostname github.com >/dev/null 2>&1; then
+    die "The GitHub CLI must be authenticated to github.com with permission to read Actions runs before this script can create test artifacts. Check: gh auth status --hostname github.com"
 fi
 
 # ---------------------------------------------------------------------------
@@ -367,10 +429,7 @@ ok "Authenticated as App: ${APP_NAME} (slug: ${APP_SLUG})"
 
 DERIVED_AUTHOR="${APP_SLUG}[bot]"
 if [ "${DERIVED_AUTHOR}" != "${EXPECTED_AUTHOR}" ]; then
-    warn "This App's PR author would be '${DERIVED_AUTHOR}', but exclusion-gate.yaml line 50"
-    warn "hardcodes '${EXPECTED_AUTHOR}'. The bypass CANNOT match, so any FAIL you see would"
-    warn "be a credential mismatch, not a CR-03 regression. Confirm you are using the"
-    warn "revert-bot App's credentials before continuing."
+    die "Authenticated App slug '${APP_SLUG}' would create PR author '${DERIVED_AUTHOR}', but exclusion-gate.yaml requires '${EXPECTED_AUTHOR}'. Refusing to create any branch or PR; use the revert-bot App credentials."
 fi
 
 effect "GET /repos/${REPO}/installation - resolve the installation id"
@@ -416,6 +475,9 @@ if [ "${MARKER_ONLY}" = true ]; then
     [ "${OPEN_COUNT}" = "1" ] || die "--marker-only needs exactly one open PR from ${BRANCH}; found ${OPEN_COUNT}."
     PR_NUMBER=$(printf '%s' "${API_BODY}" | jq -r '.[0].number')
     PR_URL=$(printf '%s' "${API_BODY}" | jq -r '.[0].html_url')
+    BASELINE_SHA=$(printf '%s' "${API_BODY}" | jq -r '.[0].head.sha')
+    [ -n "${BASELINE_SHA}" ] && [ "${BASELINE_SHA}" != "null" ] \
+        || die "--marker-only could not determine the PR's baseline head SHA. Refusing to add labels or commit the verdict marker."
     ok "Resuming with PR #${PR_NUMBER}"
 else
     [ "${OPEN_COUNT}" = "0" ] || die "An open PR from ${BRANCH} already exists. Close it (WITHOUT merging) and delete the branch, then re-run."
@@ -476,7 +538,7 @@ EOF
     banner "Step 3 — open the PR AS THE APP"
 
     PR_BODY=$(cat <<'EOF'
-**TEST ARTIFACT - DO NOT MERGE. Close without merging once verified.**
+**DRAFT TEST ARTIFACT - DO NOT MERGE. Close without merging once verified.**
 
 CR-03 positive proof (GSD quick task 260812-oje): confirms that a legitimate
 `k8s-cluster-revert-bot[bot]`-authored revert PR still bypasses the exclusion gate
@@ -486,26 +548,33 @@ Real revert PRs #1082-#1084 all predate that commit, so nothing yet proved the
 positive path still works. If it does not, the health-gate's own revert PRs would be
 gated as human-required and never self-merge, silently disabling auto-revert.
 
-Sequence: this PR's FIRST exclusion-gate run is a clean baseline (root-level file,
-no exclusion category, unpaused circuit breaker). The `automated-revert` label is
-then applied, and a second commit touching `kubernetes/bootstrap/talos/` fires
+Sequence: this draft PR's FIRST exclusion-gate run is a clean baseline (root-level
+file, no exclusion category, unpaused circuit breaker). The script waits for that
+run to complete successfully before applying the `automated-revert` and `hold`
+labels. A second commit touching `kubernetes/bootstrap/talos/` then fires
 `synchronize` - that run is the verdict.
 EOF
 )
     effect "POST /repos/${REPO}/pulls - open PR ${BRANCH} -> main (authored by the App)"
     api POST "/repos/${REPO}/pulls" \
         "$(jq -nc \
-            --arg title "TEST ARTIFACT - DO NOT MERGE: CR-03 bypass positive proof" \
+            --arg title "test(health-gate): DO NOT MERGE without runbook — CR-03 positive bot bypass" \
             --arg head "${BRANCH}" \
             --arg base "main" \
             --arg body "${PR_BODY}" \
-            '{title:$title, head:$head, base:$base, body:$body, draft:false}')"
+            '{title:$title, head:$head, base:$base, body:$body, draft:true}')"
     expect_2xx "Could not open the PR"
     PR_NUMBER=$(printf '%s' "${API_BODY}" | jq -r '.number')
     PR_URL=$(printf '%s' "${API_BODY}" | jq -r '.html_url')
     PR_AUTHOR=$(printf '%s' "${API_BODY}" | jq -r '.user.login')
     PR_AUTHOR_TYPE=$(printf '%s' "${API_BODY}" | jq -r '.user.type')
+    BASELINE_SHA=$(printf '%s' "${API_BODY}" | jq -r '.head.sha')
+    [ -n "${BASELINE_SHA}" ] && [ "${BASELINE_SHA}" != "null" ] \
+        || die "The PR response did not include a baseline head SHA. Refusing to add labels or commit the verdict marker."
     ok "Opened PR #${PR_NUMBER}: ${PR_URL}"
+
+    # Draft PRs still trigger pull_request_target: exclusion-gate.yaml has no
+    # draft-specific filter, as verified in that workflow before using draft:true.
 
     # The single most important assertion in this script. If authorship is wrong the
     # entire test is meaningless, and a later "FAIL" would be a false alarm.
@@ -531,45 +600,51 @@ Close PR #${PR_NUMBER} without merging and delete ${BRANCH} before retrying."
     log "Its purpose is to establish that this PR is unremarkable BEFORE the label and"
     log "the excluded path are introduced. If this baseline is already labelled,"
     log "something unrelated is wrong - investigate before trusting run 2."
-    log ""
-    log "Let it finish, then continue:"
-    log "  ${C}gh pr checks --repo ${REPO} ${PR_NUMBER}${N}"
+    log "Baseline head SHA: ${BASELINE_SHA}"
 fi
+
+if [ "${MARKER_ONLY}" = true ]; then
+    log "Baseline head SHA: ${BASELINE_SHA}"
+fi
+wait_for_baseline_run
 
 # ---------------------------------------------------------------------------
 # Step 4: label
 # ---------------------------------------------------------------------------
-banner "Step 4 — apply the '${LABEL}' label"
+banner "Step 4 — apply the '${LABEL}' and '${HOLD_LABEL}' labels"
 
 log "Adding the label does NOT retrigger the gate: exclusion-gate.yaml's trigger is a"
 log "bare 'pull_request_target', whose default activity types are opened/reopened/"
 log "synchronize - 'labeled' is not among them. The next commit is what retriggers."
 log ""
 
-effect "POST /repos/${REPO}/issues/${PR_NUMBER}/labels - add '${LABEL}'"
-api POST "/repos/${REPO}/issues/${PR_NUMBER}/labels" \
-    "$(jq -nc --arg l "${LABEL}" '{labels:[$l]}')"
-if ! case "${HTTP_CODE}" in 2*) true ;; *) false ;; esac; then
-    warn "Could not add the label as the App (HTTP ${HTTP_CODE}: $(api_err))."
-    log ""
-    log "The label's applier is irrelevant to the gate - only its presence is checked."
-    log "Apply it yourself, then resume at the final commit:"
-    log "  ${C}gh pr edit --repo ${REPO} ${PR_NUMBER} --add-label ${LABEL}${N}"
-    log "  ${C}$0 --marker-only${N}"
-    exit 1
-fi
-
-# Verify presence rather than trusting the POST: a missing label would make the
-# bypass legitimately decline, producing a false FAIL on the verdict run.
-effect "GET /repos/${REPO}/pulls/${PR_NUMBER} - verify the label is really present"
+effect "GET /repos/${REPO}/pulls/${PR_NUMBER} - check whether both required labels are already present"
 api GET "/repos/${REPO}/pulls/${PR_NUMBER}"
-expect_2xx "Could not re-read the PR"
-if ! printf '%s' "${API_BODY}" | jq -e --arg l "${LABEL}" '.labels | map(.name) | index($l)' >/dev/null; then
-    die "The '${LABEL}' label is not present on PR #${PR_NUMBER} after the add call.
-Without it the bypass would correctly decline and the verdict run would be a false FAIL.
-Apply it manually, then re-run: $0 --marker-only"
+expect_2xx "Could not read the PR before applying labels"
+if ! printf '%s' "${API_BODY}" | jq -e --arg label "${LABEL}" --arg hold "${HOLD_LABEL}" \
+    '[.labels[].name] as $labels | (($labels | index($label)) != null and ($labels | index($hold)) != null)' >/dev/null; then
+    effect "POST /repos/${REPO}/issues/${PR_NUMBER}/labels - add '${LABEL}' and '${HOLD_LABEL}' as the App"
+    api POST "/repos/${REPO}/issues/${PR_NUMBER}/labels" \
+        "$(jq -nc --arg label "${LABEL}" --arg hold "${HOLD_LABEL}" '{labels:[$label,$hold]}')"
+    if ! case "${HTTP_CODE}" in 2*) true ;; *) false ;; esac; then
+        warn "The App could not apply both required labels (HTTP ${HTTP_CODE}: $(api_err))."
+        print_label_fallback
+        exit 1
+    fi
+
+    # Verify both labels rather than trusting the POST: missing automated-revert
+    # would make the bypass decline; missing hold would hide this draft from cleanup.
+    effect "GET /repos/${REPO}/pulls/${PR_NUMBER} - verify both labels are present"
+    api GET "/repos/${REPO}/pulls/${PR_NUMBER}"
+    expect_2xx "Could not re-read the PR after applying labels"
+    if ! printf '%s' "${API_BODY}" | jq -e --arg label "${LABEL}" --arg hold "${HOLD_LABEL}" \
+        '[.labels[].name] as $labels | (($labels | index($label)) != null and ($labels | index($hold)) != null)' >/dev/null; then
+        warn "Both required labels are not present on PR #${PR_NUMBER} after the App label call."
+        print_label_fallback
+        exit 1
+    fi
 fi
-ok "Label '${LABEL}' confirmed present."
+ok "Labels '${LABEL}' and '${HOLD_LABEL}' confirmed present."
 
 # ---------------------------------------------------------------------------
 # Step 5: the verdict commit

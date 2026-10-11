@@ -107,8 +107,10 @@ events HardExclusionBlocked
 ## 2. CR-03 positive: a real revert-bot PR still bypasses (k8s-zdb.5.3)
 
 **Proves:** a PR actually authored by `k8s-cluster-revert-bot[bot]` (type Bot) gets the bypass. If this fails, every automatic revert PR is gated as human-required and auto-revert is silently disabled.
-**Failure-inducing change:** the script creates branch `auto-revert/bypass-positive-test` and a PR authored by the App, then commits the inert `kubernetes/bootstrap/talos/BYPASS-POSITIVE-TEST-MARKER.md`.
-**Preconditions:** B0; CR-03 negative done; revert-bot App credentials (owner-only, from Doppler).
+**Failure-inducing change:** the script creates branch `auto-revert/bypass-positive-test` and a draft PR authored by the App, then commits the inert `kubernetes/bootstrap/talos/BYPASS-POSITIVE-TEST-MARKER.md`.
+**Preconditions:** B0; CR-03 negative done; revert-bot App credentials (owner-only, from Doppler); `gh` authenticated to read Actions runs.
+
+Draft PRs still trigger `pull_request_target`: `.github/workflows/exclusion-gate.yaml` has no draft-specific filter. The script comments on this check beside the draft creation.
 
 ```bash
 cd /Users/jbaker/git/k8s-cluster
@@ -119,7 +121,7 @@ docs/sre-agent/runbooks/cr03-bypass-positive-proof.sh
 unset REVERT_BOT_APP_PRIVATE_KEY
 ```
 
-**Expected:** the script prints RUN 1 (baseline, not the verdict) and RUN 2 (verdict). In RUN 2, "Comment on bypassed PR" ran, every post-bypass step is `skipped`, and no `gate/human-required` label is applied even though a talos path is in the diff. No Flux change. No Slack (no exclusion is computed, so no `HardExclusionBlocked`).
+**Expected:** the script creates a draft PR titled `test(health-gate): DO NOT MERGE without runbook — CR-03 positive bot bypass`. It waits up to 10 minutes for Exclusion Gate RUN 1 on the baseline head SHA to complete successfully before applying `automated-revert` and `hold` and committing the marker. The PR remains a draft with `hold` during the test. In RUN 2 (verdict), "Comment on bypassed PR" ran, every post-bypass step is `skipped`, and no `gate/human-required` label is applied even though a talos path is in the diff. No Flux change. No Slack (no exclusion is computed, so no `HardExclusionBlocked`).
 **PASS:** RUN 2 took the bypass. **FAIL:** RUN 2 evaluated exclusions. Stop and file a P1 bug on k8s-zdb.5; k8s-zdb.6 cannot go live.
 **Cleanup:** run the teardown commands the script prints (close the PR without merging, delete the branch).
 **Beads:** comment on k8s-zdb.5.3 with PR number and both run URLs.

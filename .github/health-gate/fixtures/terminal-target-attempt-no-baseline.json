@@ -359,7 +359,11 @@
                 }
               ],
               "inventory": {
-                "entries": []
+                "entries": [
+                  {
+                    "id": "flux-system_app-owner_kustomize.toolkit.fluxcd.io_Kustomization"
+                  }
+                ]
               },
               "lastAppliedRevision": "main@sha1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
               "lastAttemptedRevision": "main@sha1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -372,7 +376,10 @@
             "metadata": {
               "annotations": {},
               "generation": 1,
-              "labels": {},
+              "labels": {
+                "kustomize.toolkit.fluxcd.io/name": "cluster-apps",
+                "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+              },
               "name": "app-owner",
               "namespace": "flux-system",
               "resourceVersion": "rv-ks-app-owner",
@@ -603,7 +610,11 @@
                 }
               ],
               "inventory": {
-                "entries": []
+                "entries": [
+                  {
+                    "id": "flux-system_app-owner_kustomize.toolkit.fluxcd.io_Kustomization"
+                  }
+                ]
               },
               "lastAppliedRevision": "main@sha1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
               "lastAttemptedRevision": "main@sha1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -616,7 +627,10 @@
             "metadata": {
               "annotations": {},
               "generation": 1,
-              "labels": {},
+              "labels": {
+                "kustomize.toolkit.fluxcd.io/name": "cluster-apps",
+                "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+              },
               "name": "app-owner",
               "namespace": "flux-system",
               "resourceVersion": "rv-ks-app-owner",

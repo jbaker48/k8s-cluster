@@ -185,6 +185,11 @@ required=(
   newest-history-wrong-digest
   inventory-orphan
   kustomization-inventory-orphan
+  kustomization-owner-inventory-missing
+  kustomization-owner-labels-missing
+  kustomization-owner-inventory-wrong-parent
+  kustomization-owner-inventory-multiple-parents
+  kustomization-owner-suspended-parent
   unknown-reconciling-condition
 )
 

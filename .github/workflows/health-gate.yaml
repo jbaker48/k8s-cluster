@@ -284,6 +284,22 @@ jobs:
                    end
                  )
                | {ks:$ks, id:$id} ]) as $inventoryorphans
+          | ([ $allks[] as $ks
+               | select(owner_identity($ks) != "flux-system/cluster"
+                       and owner_identity($ks) != "flux-system/cluster-apps")
+               | (owner_ref($ks)) as $ownerid
+               | ($allks | map(select(owner_identity(.) == $ownerid))) as $parents
+               | ($allks
+                  | map(select((.status.inventory_ids // [])
+                              | index(kustomization_inventory_id($ks)) != null)))
+                 as $inventoryparents
+               | select(($ks.metadata.labels["kustomize.toolkit.fluxcd.io/name"] // "") == ""
+                       or ($ks.metadata.labels["kustomize.toolkit.fluxcd.io/namespace"] // "") == ""
+                       or ($parents | length) != 1
+                       or $parents[0].suspended == true
+                       or ($inventoryparents | length) != 1
+                       or owner_identity($inventoryparents[0]) != $ownerid)
+               | $ks ]) as $badksowners
           | ([ $p.helm_releases[]? as $proof
                | select([$allhrs[]
                         | select(.metadata.namespace == $proof.namespace and
@@ -376,6 +392,7 @@ jobs:
               and ($missingks | length) == 0
               and ($badhrs | length) == 0
               and ($badowners | length) == 0
+              and ($badksowners | length) == 0
               and ($inventorymissing | length) == 0
               and ($inventoryduplicates | length) == 0
               and ($inventoryorphans | length) == 0
@@ -400,6 +417,7 @@ jobs:
               and ($setmismatch | length) == 0
               and ($ksmismatch | length) == 0
               and ($badowners | length) == 0
+              and ($badksowners | length) == 0
               and ($inventorymissing | length) == 0
               and ($inventoryduplicates | length) == 0
               and ($inventoryorphans | length) == 0
@@ -415,6 +433,10 @@ jobs:
                | {kind:"HelmRelease", namespace:.metadata.namespace,
                   name:.metadata.name, code:"owner-inventory-invalid",
                   reason:"owner-inventory-invalid"} ]) as $ownerdiags
+          | ([ $badksowners[]
+               | {kind:"Kustomization", namespace:.metadata.namespace,
+                  name:.metadata.name, code:"kustomization-owner-inventory-invalid",
+                  reason:"kustomization-owner-inventory-invalid"} ]) as $ksownerdiags
           | ([ $mixed[]
                | {kind:"Kustomization", namespace:.metadata.namespace,
                   name:.metadata.name, code:"revision-not-target",
@@ -460,7 +482,7 @@ jobs:
                | {kind:"Kustomization", namespace:.ks.metadata.namespace,
                   name:.ks.metadata.name, code:"inventory-orphan",
                   reason:"inventory-orphan"} ]) as $inventoryorphandiags
-          | ($diagnostics + $ownerdiags + $revisiondiags + $hrdiags + $ksdiags +
+          | ($diagnostics + $ownerdiags + $ksownerdiags + $revisiondiags + $hrdiags + $ksdiags +
              $unsupporteddiags + $unsupportedksdiags + $missinghrdiags +
              $missingksdiags + $inventorymissingdiags +
              $inventoryduplicatediags + $inventoryorphandiags) as $all_diag

@@ -1,0 +1,16 @@
+{
+  "name": "kustomization-owner-suspended-parent",
+  "base_fixture": "stable-supported-target",
+  "proof_mutations": [
+    {
+      "path": ["proof", "observed", "kustomizations", 1, "suspended"],
+      "value": true
+    }
+  ],
+  "expected": {
+    "all_ready": false,
+    "diagnostic_codes": ["kustomization-owner-inventory-invalid"],
+    "sample_valid": false,
+    "superseded": false
+  }
+}

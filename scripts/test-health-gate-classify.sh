@@ -431,6 +431,12 @@ required=(
   kustomization-live-metadata-mismatch
   candidate-wrong-sole-inventory-holder
   unknown-reconciling-condition
+  notify-real-root-shape
+  notify-missing-child-root-failure
+  notify-inactive-vs-unresolved-chain
+  notify-oci-source-failure
+  notify-helmrepository-helmchart-failure
+  notify-unreferenced-source-failure
 )
 
 fixture_count=0
@@ -1048,15 +1054,18 @@ notification_output() {
   awk -F= -v key="$key" '$1 == key { value = substr($0, length(key) + 2) } END { print value }' "$GITHUB_OUTPUT"
 }
 notification_expected=$(jq -c '.steps[0].expected' "$notification_poll_fixture")
+notification_poll_diagnostics=$(awk '/^diagnostics<<HEALTHGATEEOF$/ { inside=1; next } inside && /^HEALTHGATEEOF$/ { exit } inside { print }' "$GITHUB_OUTPUT")
 if [ "$(notification_output flux_unhealthy)" != true ] \
   || [ "$(notification_output flux_notification_evidence)" != valid ] \
   || [ "$(notification_output flux_notification_scope)" != "apps:demo/app" ] \
   || [ "$(notification_output outcome)" != inconclusive ] \
   || [ "$(notification_output rollback_authorized)" != false ] \
   || [ "$(notification_output stalled_or_failed)" != '[]' ] \
+  || ! printf '%s' "$notification_poll_diagnostics" | "$REAL_JQ" -e \
+    'any(.diagnostics[]?; .code == "render-cache-unavailable")' >/dev/null \
   || [ "$(<"$POLL_STATE/kubectl-count")" != 12 ] \
   || [ "$(<"$POLL_STATE/gh-count")" != 2 ]; then
-  printf 'raw poll outputs or bounded read counts mismatched: outputs=%s\n' \
+  printf 'raw poll outputs, render-failure diagnostics or bounded read counts mismatched: outputs=%s\n' \
     "$(cat "$GITHUB_OUTPUT")" >&2
   cat "$notification_poll_dir/stdout" "$notification_poll_dir/stderr" >&2
   cat "$POLL_TRACE" >&2

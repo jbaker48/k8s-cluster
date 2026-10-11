@@ -1104,6 +1104,14 @@ jobs:
           else
             FLUX_PAGE_STATUS=non-paging
           fi
+          if [ "$HEALTH_GATE_RENDER_STATUS" != ready ] \
+            || [ ! -s "$RENDER_CACHE" ]; then
+            LAST_RESULT=$(printf '%s' "$LAST_RESULT" | jq -c '
+              if any(.diagnostics[]?; .code == "render-cache-unavailable") then .
+              else .diagnostics += [{"kind":"Sample","namespace":"","name":"","code":"render-cache-unavailable","reason":"render-cache-unavailable"}]
+              end
+            ')
+          fi
           FLUX_OBJECT_COUNT=$(printf '%s' "$FLUX_OBJECTS" | jq 'length')
           {
             echo "all_ready=$ALL_READY"

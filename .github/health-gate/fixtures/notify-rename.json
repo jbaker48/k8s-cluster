@@ -117,7 +117,10 @@
                 "kind": "Kustomization",
                 "metadata": {
                   "generation": 1,
-                  "labels": {},
+                  "labels": {
+                    "kustomize.toolkit.fluxcd.io/name": "cluster",
+                    "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+                  },
                   "name": "cluster",
                   "namespace": "flux-system",
                   "uid": "uid-ks-cluster"
@@ -141,6 +144,9 @@
                   ],
                   "inventory": {
                     "entries": [
+                      {
+                        "id": "flux-system_cluster_kustomize.toolkit.fluxcd.io_Kustomization"
+                      },
                       {
                         "id": "flux-system_cluster-apps_kustomize.toolkit.fluxcd.io_Kustomization"
                       }
@@ -409,7 +415,10 @@
                 "kind": "Kustomization",
                 "metadata": {
                   "generation": 1,
-                  "labels": {},
+                  "labels": {
+                    "kustomize.toolkit.fluxcd.io/name": "cluster",
+                    "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+                  },
                   "name": "cluster",
                   "namespace": "flux-system",
                   "uid": "uid-ks-cluster"
@@ -433,6 +442,9 @@
                   ],
                   "inventory": {
                     "entries": [
+                      {
+                        "id": "flux-system_cluster_kustomize.toolkit.fluxcd.io_Kustomization"
+                      },
                       {
                         "id": "flux-system_cluster-apps_kustomize.toolkit.fluxcd.io_Kustomization"
                       }

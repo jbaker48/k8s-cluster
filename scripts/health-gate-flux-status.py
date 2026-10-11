@@ -365,7 +365,7 @@ def candidate_signature(resource: dict[str, Any], kind: str) -> tuple[Any, ...] 
         if path is None or source is None:
             return None
         signature.extend((path, source))
-    else:
+    elif kind == "HelmRelease":
         labels = metadata.get("labels") or {}
         if not isinstance(labels, dict):
             return None
@@ -373,7 +373,66 @@ def candidate_signature(resource: dict[str, Any], kind: str) -> tuple[Any, ...] 
             labels.get("kustomize.toolkit.fluxcd.io/name"),
             labels.get("kustomize.toolkit.fluxcd.io/namespace"),
         ))
+    elif kind == "HelmChart":
+        labels = metadata.get("labels") or {}
+        if not isinstance(labels, dict):
+            return None
+        signature.append((
+            labels.get("helm.toolkit.fluxcd.io/name"),
+            labels.get("helm.toolkit.fluxcd.io/namespace"),
+        ))
     return tuple(signature)
+
+
+def chart_source_references(
+    release: dict[str, Any],
+) -> tuple[set[tuple[str, str, str]], bool]:
+    key = resource_key(release)
+    spec = release.get("spec")
+    if key is None or not isinstance(spec, dict):
+        return set(), False
+    references: set[tuple[str, str, str]] = set()
+    has_legacy_helm_repository = False
+    chart_ref = spec.get("chartRef")
+    if isinstance(chart_ref, dict) and chart_ref.get("kind") == "OCIRepository":
+        name = chart_ref.get("name")
+        namespace = chart_ref.get("namespace", key[0])
+        if all(isinstance(value, str) and value for value in (namespace, name)):
+            references.add(("OCIRepository", namespace, name))
+    chart = spec.get("chart")
+    chart_spec = chart.get("spec") if isinstance(chart, dict) else None
+    source_ref = chart_spec.get("sourceRef") if isinstance(chart_spec, dict) else None
+    if isinstance(source_ref, dict) and source_ref.get("kind") == "HelmRepository":
+        name = source_ref.get("name")
+        namespace = source_ref.get("namespace", key[0])
+        if all(isinstance(value, str) and value for value in (namespace, name)):
+            references.add(("HelmRepository", namespace, name))
+            has_legacy_helm_repository = True
+    return references, has_legacy_helm_repository
+
+
+def generated_helmcharts(
+    release: dict[str, Any], helmcharts: list[dict[str, Any]]
+) -> tuple[list[dict[str, Any]], bool]:
+    key = resource_key(release)
+    if key is None:
+        return [], False
+    matches = []
+    for chart in helmcharts:
+        metadata = chart.get("metadata")
+        labels = metadata.get("labels") if isinstance(metadata, dict) else None
+        if not isinstance(labels, dict):
+            continue
+        if (labels.get("helm.toolkit.fluxcd.io/name") == key[1]
+                and labels.get("helm.toolkit.fluxcd.io/namespace") == key[0]):
+            matches.append(chart)
+    status = release.get("status")
+    chart_reference = status.get("helmChart") if isinstance(status, dict) else None
+    if isinstance(chart_reference, str) and chart_reference.count("/") == 1:
+        namespace, name = chart_reference.split("/", 1)
+        referenced = (namespace, name)
+        matches = [chart for chart in matches if resource_key(chart) == referenced]
+    return matches, isinstance(chart_reference, str) and chart_reference.count("/") == 1
 
 
 def safe_reason(value: str) -> str:
@@ -426,10 +485,13 @@ def scope_kustomizations(
         path = normalized_path((resource.get("spec") or {}).get("path"))
         if path is None:
             continue
-        if any(path_contains(app, path) for app in apps):
-            key = resource_key(resource)
-            if key:
-                selected.add(key)
+        key = resource_key(resource)
+        if not key:
+            continue
+        if (any(path_contains(app, path) for app in apps)
+                or (key == ("flux-system", "cluster-apps")
+                    and any(path_contains(path, app) for app in apps))):
+            selected.add(key)
     return repository, selected
 
 
@@ -581,26 +643,36 @@ def evaluate(
             and active(source_after))
     )
 
-    # An eligible object must have a stable, active owner chain.
-    active_chain_ok: dict[tuple[str, str], bool] = {}
+    # Distinguish an explicitly inactive chain from an unresolved owner chain.
+    active_chain_state: dict[tuple[str, str], str] = {}
     for key in selected_ks_keys:
-        chain_ok = True
+        chain_state = "active"
         seen: set[tuple[str, str]] = set()
         current = key
         while True:
-            if current in seen or current in ks_owner_errors:
-                chain_ok = False
+            if current in seen or current in ks_owner_errors or current not in ks_owner_map:
+                chain_state = "unresolved"
                 break
             seen.add(current)
+            resource = after_ks.get(current)
+            if resource is None:
+                chain_state = "unresolved"
+                break
+            if not active(resource):
+                chain_state = "inactive"
+                break
             owner = ks_owner_map.get(current)
-            if owner is None:
+            if owner is None or owner == current:
                 break
             parent = after_ks.get(owner)
-            if owner not in selected_ks_keys or parent is None or not active(parent):
-                chain_ok = False
+            if owner not in selected_ks_keys or parent is None:
+                chain_state = "unresolved"
+                break
+            if not active(parent):
+                chain_state = "inactive"
                 break
             current = owner
-        active_chain_ok[key] = chain_ok
+        active_chain_state[key] = chain_state
 
     current_failures: dict[tuple[str, str, str, str, int], dict[str, Any]] = {}
     invalid_candidates: set[tuple[str, str, str]] = set()
@@ -639,8 +711,12 @@ def evaluate(
             if not source_valid:
                 invalid_candidates.add(("Kustomization", *key))
                 continue
-            if not active(resource) or not active_chain_ok.get(key, True):
+            chain_state = active_chain_state.get(key, "unresolved")
+            if not active(resource) or chain_state == "inactive":
                 resolved_candidates.add(("Kustomization", *key))
+                continue
+            if chain_state != "active":
+                invalid_candidates.add(("Kustomization", *key))
                 continue
             identity = metadata_identity(resource)
             if identity is None:
@@ -674,6 +750,9 @@ def evaluate(
     all_ks = after_lists["kustomizations"]
     before_ks_resources = before_lists["kustomizations"]
     after_hrs = after_indexes["helmreleases"]
+    reachable_sources: dict[
+        tuple[str, str, str], set[tuple[str, str]]
+    ] = {}
     for key in sorted(after_hrs):
         if scope["mode"] == "empty":
             break
@@ -713,14 +792,41 @@ def evaluate(
         if owner_stable is None:
             invalid_candidates.add(("HelmRelease", *key))
             continue
-        if not active(stable) or not active(scoped_owner) or not active_chain_ok.get(owner, True):
+        chain_state = active_chain_state.get(owner, "unresolved")
+        if not active(stable) or not active(scoped_owner) or chain_state == "inactive":
             resolved_candidates.add(("HelmRelease", *key))
+            continue
+        if chain_state != "active":
+            diagnostics.add("notification-owner-chain-unavailable")
+            invalid_candidates.add(("HelmRelease", *key))
             continue
         release_identity = metadata_identity(stable)
         if release_identity is None:
             diagnostics.add("notification-helmrelease-identity-invalid")
             invalid_candidates.add(("HelmRelease", *key))
             continue
+        references, has_legacy_helm_repository = chart_source_references(stable)
+        for reference in references:
+            reachable_sources.setdefault(reference, set()).add(owner)
+        if has_legacy_helm_repository:
+            charts, has_chart_status_reference = generated_helmcharts(
+                stable, after_lists["helmcharts"]
+            )
+            if len(charts) == 1:
+                chart_key = resource_key(charts[0])
+                if chart_key:
+                    reachable_sources.setdefault(
+                        ("HelmChart", *chart_key), set()
+                    ).add(owner)
+            elif len(charts) > 1:
+                diagnostics.add("notification-helmchart-owner-ambiguous")
+                invalid_candidates.update(
+                    ("HelmChart", *chart_key)
+                    for chart in charts
+                    if (chart_key := resource_key(chart))
+                )
+            elif has_chart_status_reference:
+                diagnostics.add("notification-helmchart-reference-unavailable")
         owner_status = scoped_owner.get("status")
         release_status = stable.get("status")
         if not isinstance(owner_status, dict) or not isinstance(release_status, dict):
@@ -751,6 +857,45 @@ def evaluate(
             identity_key = ("HelmRelease", *key, release_identity[0], release_identity[1])
             current_failures[identity_key] = obj
 
+    source_collections = {
+        "OCIRepository": "ocirepositories",
+        "HelmRepository": "helmrepositories",
+        "HelmChart": "helmcharts",
+    }
+    for (kind, namespace, name), owners in sorted(reachable_sources.items()):
+        collection = source_collections[kind]
+        source_key = (namespace, name)
+        resource = stable_resource(collection, kind, source_key)
+        if resource is None:
+            continue
+        if not active(resource):
+            resolved_candidates.add((kind, *source_key))
+            continue
+        identity = metadata_identity(resource)
+        if identity is None:
+            diagnostics.add("notification-source-identity-invalid")
+            invalid_candidates.add((kind, *source_key))
+            continue
+        failure, problem = condition_failure(resource)
+        if problem:
+            diagnostics.add("notification-" + problem)
+            invalid_candidates.add((kind, *source_key))
+            continue
+        resolved_candidates.add((kind, *source_key))
+        if failure:
+            owner = sorted(owners)[0]
+            owner_status = scoped_ks.get(owner, {}).get("status")
+            revision = (
+                owner_status.get("lastAttemptedRevision", "")
+                if isinstance(owner_status, dict) else ""
+            )
+            obj = describe_failure(
+                resource, kind, failure, target_sha, owner,
+                observation_time, str(revision),
+            )
+            identity_key = (kind, *source_key, identity[0], identity[1])
+            current_failures[identity_key] = obj
+
     # A valid non-failing observation clears prior failures. Partial observations
     # retain old evidence only for candidates whose current state was unresolved.
     previous_by_name: dict[tuple[str, str, str], dict[str, Any]] = {}
@@ -766,9 +911,12 @@ def evaluate(
         for object_name, item in previous_by_name.items():
             if object_name in invalid_candidates:
                 old_identity = (item.get("uid"), item.get("generation"))
-                current = after_indexes.get(
-                    "kustomizations" if object_name[0] == "Kustomization" else "helmreleases", {}
-                ).get((object_name[1], object_name[2]))
+                collection = {
+                    "Kustomization": "kustomizations",
+                    "HelmRelease": "helmreleases",
+                    **source_collections,
+                }.get(object_name[0], "helmreleases")
+                current = after_indexes.get(collection, {}).get((object_name[1], object_name[2]))
                 current_identity = metadata_identity(current) if current else None
                 if current_identity and current_identity != old_identity:
                     continue
@@ -778,9 +926,12 @@ def evaluate(
             }:
                 # A parser/read gap unrelated to this previously failing object
                 # does not manufacture recovery evidence.
-                current = after_indexes.get(
-                    "kustomizations" if object_name[0] == "Kustomization" else "helmreleases", {}
-                ).get((object_name[1], object_name[2]))
+                collection = {
+                    "Kustomization": "kustomizations",
+                    "HelmRelease": "helmreleases",
+                    **source_collections,
+                }.get(object_name[0], "helmreleases")
+                current = after_indexes.get(collection, {}).get((object_name[1], object_name[2]))
                 current_identity = metadata_identity(current) if current else None
                 old_identity = (item.get("uid"), item.get("generation"))
                 if current is None or (current_identity and current_identity != old_identity):

@@ -49,6 +49,7 @@ k8s-zdb.5.2 rewrites the poll classification, adds revision freshness/supersessi
 - **Merge freeze** during CR-02 and V-8: no other merges to `main`, including Renovate. (Renovate has no automerge configured in `.github/renovate.json5` at d54dd599; re-check before V-8.)
 - Slack evidence arrives via Robusta, which forwards only four Event reasons: `HealthGateAutoRevert`, `HealthGateInconclusive`, `HealthGateRevertFailed`, `HardExclusionBlocked`. Robusta titles the Slack finding with the Event's `metadata.name`. If the Event exists in-cluster but Slack shows nothing, that is the pre-existing gap G-05-1 (Robusta/Slack delivery), not a regression of the step under test; record it.
 - Event names include the GitHub run id, so `RUN` below is always the run's `databaseId`.
+- **Start each verification test with a fresh trigger.** For tests triggered by `workflow_dispatch`, always use a fresh `gh workflow run` dispatch; never use GitHub's “Re-run jobs” for any verification test. For event-triggered tests, create the fresh PR, push, or merge event prescribed by that section. Event names include the GitHub run id, so `RUN` below is always the run's `databaseId`. A rerun preserves that id, so a second `kubectl create` of the same Event fails with `AlreadyExists` and produces a false FAIL. (V-5 review on PR #1139.)
 
 ### 0.5 B0: baseline (run before every section)
 

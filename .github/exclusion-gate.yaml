@@ -23,3 +23,12 @@ cilium:
   paths:
     - "kubernetes/apps/kube-system/cilium/**"
     - "kubernetes/flux/repositories/helm/cilium.yaml"
+
+rook-ceph:
+  reason: >-
+    Rook-Ceph is the cluster's distributed block/filesystem storage; a bad
+    operator/cluster/chart change can make every Ceph-backed PVC unavailable
+    or lose data cluster-wide.
+  paths:
+    - "kubernetes/apps/rook-ceph/**"
+    - "kubernetes/flux/repositories/helm/rook-ceph.yaml"

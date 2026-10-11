@@ -191,7 +191,7 @@ gh pr create --repo jbaker48/k8s-cluster \
 
 ## 4. PR B — the actual test
 
-PR B must touch a path that is **outside `kubernetes/apps/**` AND outside all three
+PR B must touch a path that is **outside `kubernetes/apps/**` AND outside all four
 exclusion categories**. That isolation is the whole point: if PR B also matched an
 exclusion category, you could not tell a circuit-breaker label apart from an
 exclusion label.
@@ -199,7 +199,8 @@ exclusion label.
 **`README.md` qualifies** — checked against `.github/exclusion-gate.yaml`'s globs
 (`kubernetes/bootstrap/talos/**`, `kubernetes/bootstrap/**`, `kubernetes/flux/**`,
 `kubernetes/components/**`, `kubernetes/templates/**`,
-`kubernetes/apps/kube-system/cilium/**`, `kubernetes/flux/repositories/helm/cilium.yaml`):
+`kubernetes/apps/kube-system/cilium/**`, `kubernetes/flux/repositories/helm/cilium.yaml`,
+`kubernetes/apps/rook-ceph/**`, `kubernetes/flux/repositories/helm/rook-ceph.yaml`):
 it matches none of them, and it is not under `kubernetes/apps/`.
 
 **Create PR B only AFTER PR A is merged**, so its `base.sha` includes the paused state.

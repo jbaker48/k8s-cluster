@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 WORKFLOW="$ROOT/.github/workflows/health-gate.yaml"
+RBAC_WORKFLOW="$ROOT/.github/workflows/test-health-gate-rbac.yaml"
 FIXTURE_DIR="$ROOT/.github/health-gate/fixtures"
 TMP_DIR=$(mktemp -d)
 trap 'if [ -d "$TMP_DIR/local-parent" ]; then git -C "$ROOT" worktree remove --force "$TMP_DIR/local-parent" >/dev/null 2>&1 || true; fi; rm -rf "$TMP_DIR"' EXIT
@@ -109,6 +110,22 @@ extract_step() {
   yq -r ".jobs[\"health-gate\"].steps[] | select(.id == \"$step_id\") | .run" "$WORKFLOW" > "$destination"
   if [ ! -s "$destination" ]; then
     printf 'workflow step %s has no extractable shell\n' "$step_id" >&2
+    return 1
+  fi
+}
+
+extract_rbac_step() {
+  local step_id=$1
+  local destination=$2
+  local count
+  count=$(yq -r ".jobs.verify-rbac.steps | map(select(.id == \"$step_id\")) | length" "$RBAC_WORKFLOW")
+  if [ "$count" != 1 ]; then
+    printf 'expected one RBAC workflow step with id %s, found %s\n' "$step_id" "$count" >&2
+    return 1
+  fi
+  yq -r ".jobs.verify-rbac.steps[] | select(.id == \"$step_id\") | .run" "$RBAC_WORKFLOW" > "$destination"
+  if [ ! -s "$destination" ]; then
+    printf 'RBAC workflow step %s has no extractable shell\n' "$step_id" >&2
     return 1
   fi
 }
@@ -233,10 +250,82 @@ if [ "${1:-}" = "--shellcheck" ]; then
     sed -E 's/\$\{\{[^}]*\}\}/fixture/g' "$TMP_DIR/$step_id.raw.sh" > "$TMP_DIR/$step_id.sh"
     shellcheck -s bash "$TMP_DIR/$step_id.sh"
   done
+  for step_id in verify-flux-source-reads deny-secret-configmap-reads deny-source-flux-mutations; do
+    extract_rbac_step "$step_id" "$TMP_DIR/rbac-$step_id.sh"
+    shellcheck -s bash "$TMP_DIR/rbac-$step_id.sh"
+  done
 elif [ "$#" -ne 0 ]; then
   printf 'usage: %s [--shellcheck]\n' "${BASH_SOURCE[0]}" >&2
   exit 2
 fi
+
+RBAC_STUB_DIR="$TMP_DIR/rbac-stubs"
+mkdir -p "$RBAC_STUB_DIR"
+cat > "$RBAC_STUB_DIR/kubectl" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+case "${1:-}" in
+  get)
+    exit 0
+    ;;
+  auth)
+    [ "${2:-}" = can-i ] || exit 96
+    case "$RBAC_STUB_MODE" in
+      allow|grant)
+        printf 'yes\n'
+        exit 0
+        ;;
+      deny)
+        printf 'no\n'
+        exit 1
+        ;;
+      command-error)
+        printf 'stubbed kubectl auth error\n' >&2
+        exit 2
+        ;;
+      *)
+        exit 97
+        ;;
+    esac
+    ;;
+  *)
+    exit 96
+    ;;
+esac
+STUB
+chmod 700 "$RBAC_STUB_DIR/kubectl"
+
+run_rbac_scenario() {
+  local step_id=$1
+  local mode=$2
+  local expected_status=$3
+  local status
+  local stderr_file="$TMP_DIR/rbac-$step_id-$mode.stderr"
+  if PATH="$RBAC_STUB_DIR:$PATH" RBAC_STUB_MODE="$mode" \
+    bash -euo pipefail "$TMP_DIR/rbac-$step_id.sh" \
+    > "$TMP_DIR/rbac-$step_id-$mode.stdout" 2> "$stderr_file"; then
+    status=0
+  else
+    status=$?
+  fi
+  if [ "$status" -ne "$expected_status" ]; then
+    printf 'RBAC shell scenario status mismatch: step=%s mode=%s actual=%s expected=%s\n' \
+      "$step_id" "$mode" "$status" "$expected_status" >&2
+    cat "$stderr_file" >&2
+    return 1
+  fi
+}
+
+for step_id in verify-flux-source-reads deny-secret-configmap-reads deny-source-flux-mutations; do
+  extract_rbac_step "$step_id" "$TMP_DIR/rbac-$step_id.sh"
+done
+run_rbac_scenario verify-flux-source-reads allow 0
+for step_id in deny-secret-configmap-reads deny-source-flux-mutations; do
+  run_rbac_scenario "$step_id" deny 0
+  run_rbac_scenario "$step_id" grant 1
+  run_rbac_scenario "$step_id" command-error 1
+done
+printf 'passed extracted health-gate RBAC shell scenarios with allowed, denied, grant, and command-error stubs\n'
 
 for step_id in app-token revert circuit-breaker revert-pr revert-provenance; do
   if [ "$step_id" = app-token ]; then
@@ -298,9 +387,13 @@ required=(
   unknown-default
   helmchart-same-version-new-bytes
   main-moves-before-revert-publication-or-merge
+  cas-unavailable-with-terminal-reconciliation-failure
   cas-unavailable-with-otherwise-complete-evidence
   changed-helmrelease-target-namespace-only
   changed-oci-source-timeout-only
+  unchanged-helmrelease-target-namespace
+  unchanged-oci-source-timeout
+  wall-deadline-preserves-last-real-diagnostics
   remote-build-dependency-owner
   render-preflight
   newest-history-failed
@@ -425,6 +518,8 @@ for fixture in "$FIXTURE_DIR"/*.json; do
       and (($expected.changed_inputs != true)
            or all(.candidate_failures[]?;
                   .checks.target_changed_effective_inputs == true))
+      and (($expected.changed_inputs != false)
+           or all(.helm_releases[]?; .changed_inputs == false))
       and all(.candidate_failures[]?; .authorized == false)
       and all(.candidate_failures[]?; .checks.healthy_premerge_baseline_same_hr_uid == false)
       and all(.candidate_failures[]?; .checks.server_enforced_base_sha_merge_cas == false)
@@ -561,6 +656,9 @@ case "$tool" in
     ;;
   sleep)
     trace sleep
+    if [ "$POLL_SCENARIO" = wall-timeout ]; then
+      exec "$REAL_SLEEP" 10
+    fi
     ;;
   python3)
     if [ "${1:-}" = -B ]; then
@@ -608,22 +706,24 @@ for fixture in "$FIXTURE_DIR"/*.json; do
   poll_cases=$((poll_cases + 1))
   poll_dir="$TMP_DIR/poll-$name"
   mkdir -p "$poll_dir/state" "$poll_dir/runner"
+  poll_effective_fixture="$poll_dir/effective.fixture.json"
+  materialize_fixture "$fixture" "$poll_effective_fixture"
   if [ "$(jq -r '.backstop_scenario // empty' "$fixture")" != "" ]; then
     backstop_fixture_dir="$poll_dir"
   fi
   poll_proof="$poll_dir/proof.json"
-  if jq -e 'has("producer_input")' "$fixture" >/dev/null; then
-    jq -c '.producer_input' "$fixture" > "$poll_dir/producer-input.json"
-    target_sha=$(jq -r '.target_sha' "$fixture")
-    parent_sha=$(jq -r '.parent_sha' "$fixture")
+  if jq -e 'has("producer_input")' "$poll_effective_fixture" >/dev/null; then
+    jq -c '.producer_input' "$poll_effective_fixture" > "$poll_dir/producer-input.json"
+    target_sha=$(jq -r '.target_sha' "$poll_effective_fixture")
+    parent_sha=$(jq -r '.parent_sha' "$poll_effective_fixture")
     "$REAL_PYTHON3" -B "$ROOT/scripts/health-gate-attest.py" \
       --target-sha "$target_sha" --parent-sha "$parent_sha" \
       --fixture-input "$poll_dir/producer-input.json" > "$poll_proof"
   else
-    jq -c '.proof' "$fixture" > "$poll_proof"
+    jq -c '.proof' "$poll_effective_fixture" > "$poll_proof"
   fi
-  target_sha=$(jq -r '.target_sha // .proof.target_sha' "$fixture")
-  parent_sha=$(jq -r '.parent_sha // .proof.parent_sha' "$fixture")
+  target_sha=$(jq -r '.target_sha // .proof.target_sha' "$poll_effective_fixture")
+  parent_sha=$(jq -r '.parent_sha // .proof.parent_sha' "$poll_effective_fixture")
   export REAL_PYTHON3 REAL_JQ REAL_SLEEP POLL_SCENARIO="$scenario" POLL_TRACE="$poll_dir/trace"
   export POLL_STATE="$poll_dir/state" POLL_EVENT="$poll_dir/event.yaml" POLL_PROOF="$poll_proof"
   jq -r '.poll_responses.main[]' "$fixture" > "$poll_dir/main.responses"
@@ -643,7 +743,7 @@ for fixture in "$FIXTURE_DIR"/*.json; do
   mkdir -p "$HEALTH_GATE_PARENT_ROOT"
   printf '{}' > "$HEALTH_GATE_RENDER_CACHE"
   export WINDOW_SECONDS
-  WINDOW_SECONDS=$(jq -r '.poll_window_seconds // 60' "$fixture")
+  WINDOW_SECONDS=$(jq -r '.poll_window_seconds // 60' "$poll_effective_fixture")
   export GITHUB_OUTPUT="$poll_dir/output" GITHUB_STEP_SUMMARY="$poll_dir/summary"
   : > "$POLL_TRACE"
   if ! PATH="$STUB_DIR:$PATH" bash -euo pipefail "$TMP_DIR/poll.sh" > "$poll_dir/stdout" 2> "$poll_dir/stderr"; then
@@ -654,7 +754,7 @@ for fixture in "$FIXTURE_DIR"/*.json; do
   fi
   outcome=$(sed -n 's/^outcome=//p' "$GITHUB_OUTPUT")
   all_ready=$(sed -n 's/^all_ready=//p' "$GITHUB_OUTPUT")
-  expected_outcome=$(jq -r '.poll_expected.outcome // "inconclusive"' "$fixture")
+  expected_outcome=$(jq -r '.poll_expected.outcome // "inconclusive"' "$poll_effective_fixture")
   if [ "$outcome" != "$expected_outcome" ]; then
     printf 'poll outcome mismatch: %s actual=%s expected=%s\n' "$name" "$outcome" "$expected_outcome" >&2
     exit 1
@@ -669,8 +769,8 @@ for fixture in "$FIXTURE_DIR"/*.json; do
   fi
   result=$(awk '/^diagnostics<<HEALTHGATEEOF$/ { inside=1; next } inside && /^HEALTHGATEEOF$/ { exit } inside { print }' "$GITHUB_OUTPUT")
   if ! printf '%s' "$result" | jq -e \
-    --argjson expected "$(jq -c '.expected' "$fixture")" \
-    --argjson poll_codes "$(jq -c '.poll_expected.diagnostic_codes // .expected.diagnostic_codes // []' "$fixture")" '
+    --argjson expected "$(jq -c '.expected' "$poll_effective_fixture")" \
+    --argjson poll_codes "$(jq -c '.poll_expected.diagnostic_codes // .expected.diagnostic_codes // []' "$poll_effective_fixture")" '
     .all_ready == $expected.all_ready
     and .sample_valid == $expected.sample_valid
     and .superseded == $expected.superseded
@@ -681,7 +781,7 @@ for fixture in "$FIXTURE_DIR"/*.json; do
     printf 'poll classifier result mismatch: %s actual=%s expected=%s\n' \
       "$name" \
       "$(printf '%s' "$result" | jq -c '{all_ready,sample_valid,superseded,stalled_or_failed,diagnostic_codes:[.diagnostics[]?.code] | unique}')" \
-      "$(jq -c '.expected' "$fixture")" >&2
+         "$(jq -c '.expected' "$poll_effective_fixture")" >&2
     cat "$POLL_TRACE" >&2
     exit 1
   fi
@@ -702,7 +802,7 @@ for fixture in "$FIXTURE_DIR"/*.json; do
         printf 'inconclusive Event omitted expected reason %s: %s\n' "$code" "$name" >&2
         exit 1
       }
-    done < <(jq -r '(.poll_expected.diagnostic_codes // .expected.diagnostic_codes // [])[]?' "$fixture")
+    done < <(jq -r '(.poll_expected.diagnostic_codes // .expected.diagnostic_codes // [])[]?' "$poll_effective_fixture")
   fi
   trace_json=$("$REAL_PYTHON3" - "$POLL_TRACE" <<'PYTHON'
 import json
@@ -723,9 +823,9 @@ while position < len(events):
 print(json.dumps(normalized, separators=(",", ":")))
 PYTHON
   )
-  if ! jq -e --argjson actual "$trace_json" '.poll_expected.command_trace == $actual' "$fixture" >/dev/null; then
+  if ! jq -e --argjson actual "$trace_json" '.poll_expected.command_trace == $actual' "$poll_effective_fixture" >/dev/null; then
     printf 'poll command trace mismatch: %s actual=%s expected=%s\n' \
-      "$name" "$trace_json" "$(jq -c '.poll_expected.command_trace' "$fixture")" >&2
+      "$name" "$trace_json" "$(jq -c '.poll_expected.command_trace' "$poll_effective_fixture")" >&2
     exit 1
   fi
   "$REAL_PYTHON3" - "$POLL_STATE" "$poll_dir" <<'PYTHON'

@@ -1,5 +1,5 @@
 {
-  "base_fixture": "cas-unavailable-with-otherwise-complete-evidence",
+  "base_fixture": "cas-unavailable-with-terminal-reconciliation-failure",
   "name": "changed-oci-source-timeout-only",
   "poll_scenario": null,
   "producer_expected": {
@@ -47,6 +47,28 @@
         "timeout"
       ],
       "value": "3m"
+    },
+    {
+      "path": [
+        "parent_render",
+        2,
+        "metadata",
+        "labels"
+      ],
+      "value": {
+        "kustomize.toolkit.fluxcd.io/name": "cluster-apps",
+        "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+      }
+    },
+    {
+      "path": [
+        "parent_render",
+        4,
+        "spec",
+        "values",
+        "replicas"
+      ],
+      "value": 2
     }
   ]
 }

@@ -1,0 +1,90 @@
+{
+  "base_fixture": "cas-unavailable-with-terminal-reconciliation-failure",
+  "name": "unchanged-oci-source-timeout",
+  "poll_scenario": null,
+  "producer_expected": {
+    "candidate_count": 0,
+    "changed_inputs": false,
+    "diagnostic_codes": [],
+    "helmreleases_supported": 1,
+    "helmreleases_total": 1,
+    "helmreleases_unsupported": 0,
+    "reason_codes": {
+      "supported": 1
+    }
+  },
+  "producer_mutations": [
+    {
+      "path": [
+        "target_render",
+        3,
+        "spec",
+        "timeout"
+      ],
+      "value": "3m"
+    },
+    {
+      "path": [
+        "snapshot",
+        "before",
+        "ocirepositories",
+        0,
+        "spec",
+        "timeout"
+      ],
+      "value": "3m"
+    },
+    {
+      "path": [
+        "snapshot",
+        "after",
+        "ocirepositories",
+        0,
+        "spec",
+        "timeout"
+      ],
+      "value": "3m"
+    },
+    {
+      "path": [
+        "parent_render",
+        2,
+        "metadata",
+        "labels"
+      ],
+      "value": {
+        "kustomize.toolkit.fluxcd.io/name": "cluster-apps",
+        "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+      }
+    },
+    {
+      "path": [
+        "parent_render",
+        4,
+        "spec",
+        "values",
+        "replicas"
+      ],
+      "value": 2
+    },
+    {
+      "path": [
+        "parent_render",
+        3,
+        "spec",
+        "timeout"
+      ],
+      "value": "3m"
+    }
+  ],
+  "expected": {
+    "all_ready": false,
+    "diagnostic_codes": [
+      "helm-attempt-not-settled",
+      "kustomization-not-settled-at-target",
+      "revision-not-target"
+    ],
+    "sample_valid": false,
+    "superseded": false
+  }
+}

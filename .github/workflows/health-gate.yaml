@@ -661,21 +661,51 @@ jobs:
           run_bounded() {
             local requested="$1"
             shift
-            local remaining budget
+            local remaining budget status
+            POLL_LAST_CALL_TIMED_OUT=false
             remaining=$((POLL_WALL_DEADLINE - SECONDS))
-            if [ "$remaining" -le 1 ]; then return 124; fi
+            if [ "$remaining" -le 1 ]; then
+              POLL_WALL_EXPIRED=true
+              POLL_LAST_CALL_TIMED_OUT=true
+              return 124
+            fi
             budget="$requested"
             if [ "$budget" -ge "$remaining" ]; then
               budget=$((remaining - 1))
             fi
-            if [ "$budget" -le 0 ]; then return 124; fi
-            python3 "$PRIVATE/run-bounded.py" "$budget" "$@"
+            if [ "$budget" -le 0 ]; then
+              POLL_WALL_EXPIRED=true
+              POLL_LAST_CALL_TIMED_OUT=true
+              return 124
+            fi
+            if python3 "$PRIVATE/run-bounded.py" "$budget" "$@"; then
+              return 0
+            else
+              status=$?
+              if [ "$status" -eq 124 ]; then
+                POLL_LAST_CALL_TIMED_OUT=true
+                remaining=$((POLL_WALL_DEADLINE - SECONDS))
+                if [ "$remaining" -le 1 ]; then
+                  POLL_WALL_EXPIRED=true
+                fi
+              fi
+              return "$status"
+            fi
           }
 
+          POLL_WALL_EXPIRED=false
+          POLL_LAST_CALL_TIMED_OUT=false
+          LAST_CLASSIFIED_SAMPLE=false
+
           record_api_error() {
+            if [ "$POLL_LAST_CALL_TIMED_OUT" = true ] \
+              && [ "$LAST_CLASSIFIED_SAMPLE" = true ]; then
+              return
+            fi
             LAST_RESULT=$(printf \
               '{"target_sha":"%s","all_ready":false,"sample_valid":false,"superseded":false,"stalled_or_failed":[],"diagnostics":[{"kind":"Sample","namespace":"","name":"","code":"api-error","reason":"api-error"}]}' \
               "$TARGET_SHA")
+            LAST_CLASSIFIED_SAMPLE=false
           }
 
           if [ -z "$WINDOW_SECONDS" ]; then WINDOW_SECONDS=900; fi
@@ -695,6 +725,7 @@ jobs:
           fi
           if [ "$POLL_BUDGET" -lt 0 ]; then POLL_BUDGET=0; fi
           POLL_WALL_DEADLINE=$((SECONDS + POLL_BUDGET))
+          POLL_WALL_EXPIRED=false
           DEADLINE=$((CURRENT_NOW + POLL_BUDGET))
           OUTCOME="inconclusive"
           LAST_RESULT='{"all_ready":false,"stalled_or_failed":[],"diagnostics":[],"sample_valid":false,"superseded":false}'
@@ -750,6 +781,14 @@ jobs:
               "$TARGET_SHA")
           else
             while :; do
+              if [ "$POLL_WALL_EXPIRED" = true ] \
+                || [ "$SECONDS" -ge "$POLL_WALL_DEADLINE" ]; then
+                if [ "$LAST_CLASSIFIED_SAMPLE" != true ]; then
+                  POLL_LAST_CALL_TIMED_OUT=true
+                  record_api_error
+                fi
+                break
+              fi
               if ! run_bounded 5 date +%s > "$PRIVATE/now"; then
                 record_api_error
                 break
@@ -872,6 +911,11 @@ jobs:
                 continue
               fi
               LAST_RESULT=$(<"$PRIVATE/result.json")
+              if [[ "$LAST_RESULT" == *'"sample_valid":true'* ]]; then
+                LAST_CLASSIFIED_SAMPLE=true
+              else
+                LAST_CLASSIFIED_SAMPLE=false
+              fi
               if ! run_bounded 10 jq -r '.superseded' "$PRIVATE/result.json" \
                 > "$PRIVATE/superseded"; then
                 record_api_error

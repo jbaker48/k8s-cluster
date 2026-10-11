@@ -43,6 +43,7 @@ jobs:
           printf 'KUBECONFIG=%s\n' "${KCFG}" >> "$GITHUB_ENV"
 
       - name: Verify reads for Flux source resources
+        id: verify-flux-source-reads
         run: |
           set -euo pipefail
           for resource in \
@@ -62,15 +63,38 @@ jobs:
             -A -o name >/dev/null
 
       - name: Verify Secret and ConfigMap reads are denied
+        id: deny-secret-configmap-reads
         run: |
           set -euo pipefail
           expect_denied() {
             local verb="$1"
             local resource="$2"
+            local scope="$3"
             local answer status
+            local -a scope_args=()
+            case "$scope" in
+              --all-namespaces)
+                if [ "$#" -ne 3 ]; then
+                  printf 'invalid scope arguments for %s %s\n' "$verb" "$resource" >&2
+                  return 1
+                fi
+                scope_args=(--all-namespaces)
+                ;;
+              --namespace)
+                if [ "$#" -ne 4 ] || [ -z "$4" ]; then
+                  printf 'invalid namespace scope for %s %s\n' "$verb" "$resource" >&2
+                  return 1
+                fi
+                scope_args=(--namespace "$4")
+                ;;
+              *)
+                printf 'invalid denial scope: %s\n' "$scope" >&2
+                return 1
+                ;;
+            esac
             answer=
             if answer=$(kubectl auth can-i \
-              "$verb" "$resource" --all-namespaces); then
+              "$verb" "$resource" "${scope_args[@]}"); then
               status=0
             else
               status=$?
@@ -84,29 +108,50 @@ jobs:
           }
           for resource in secrets configmaps; do
             for verb in get list watch; do
-              expect_denied "$verb" "$resource"
+              expect_denied "$verb" "$resource" --all-namespaces
             done
           done
           for namespace in flux-system media; do
             for resource in secrets configmaps; do
               for verb in get list; do
-                answer=$(kubectl auth can-i "$verb" "$resource" \
-                  --namespace "$namespace")
-                test "$answer" = "no"
+                expect_denied "$verb" "$resource" --namespace "$namespace"
               done
             done
           done
 
       - name: Verify source and Flux resource mutations are denied
+        id: deny-source-flux-mutations
         run: |
           set -euo pipefail
           expect_denied() {
             local verb="$1"
             local resource="$2"
+            local scope="$3"
             local answer status
+            local -a scope_args=()
+            case "$scope" in
+              --all-namespaces)
+                if [ "$#" -ne 3 ]; then
+                  printf 'invalid scope arguments for %s %s\n' "$verb" "$resource" >&2
+                  return 1
+                fi
+                scope_args=(--all-namespaces)
+                ;;
+              --namespace)
+                if [ "$#" -ne 4 ] || [ -z "$4" ]; then
+                  printf 'invalid namespace scope for %s %s\n' "$verb" "$resource" >&2
+                  return 1
+                fi
+                scope_args=(--namespace "$4")
+                ;;
+              *)
+                printf 'invalid denial scope: %s\n' "$scope" >&2
+                return 1
+                ;;
+            esac
             answer=
             if answer=$(kubectl auth can-i \
-              "$verb" "$resource" --all-namespaces); then
+              "$verb" "$resource" "${scope_args[@]}"); then
               status=0
             else
               status=$?
@@ -126,7 +171,7 @@ jobs:
             helmrepositories.source.toolkit.fluxcd.io \
             helmcharts.source.toolkit.fluxcd.io; do
             for verb in create update patch delete; do
-              expect_denied "$verb" "$resource"
+              expect_denied "$verb" "$resource" --all-namespaces
             done
           done
           for namespace in flux-system media; do
@@ -138,9 +183,7 @@ jobs:
               helmrepositories.source.toolkit.fluxcd.io \
               helmcharts.source.toolkit.fluxcd.io; do
               for verb in create update patch delete; do
-                answer=$(kubectl auth can-i "$verb" "$resource" \
-                  --namespace "$namespace")
-                test "$answer" = "no"
+                expect_denied "$verb" "$resource" --namespace "$namespace"
               done
             done
           done

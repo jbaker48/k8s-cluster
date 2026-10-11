@@ -14,6 +14,7 @@ days for major, minor, and patch releases. `timestamp-optional` avoids holding
 updates forever when a release timestamp is missing; Renovate silently stalled
 for five months before (`k8s-ykh`).
 
+Renovate requires dependency dashboard approval before opening Talos, Kubernetes, Cilium, and Rook-Ceph update PRs.
 Dashboard approval only gates Renovate branch and PR creation; it does not
 check the approver's identity or block merging. Talos, Kubernetes-core paths,
 and Cilium are additionally blocked from auto-merge by

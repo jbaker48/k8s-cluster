@@ -1,7 +1,9 @@
 {
   "expected": {
     "all_ready": false,
-    "diagnostic_codes": [],
+    "diagnostic_codes": [
+      "helm-attempt-not-settled"
+    ],
     "sample_valid": true,
     "superseded": false
   },

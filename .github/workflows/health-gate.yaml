@@ -25,9 +25,15 @@ jobs:
     permissions:
       contents: read
     steps:
+      - name: Record health-gate job deadline
+        id: job-start
+        run: |
+          set -euo pipefail
+          echo "HEALTH_GATE_JOB_STARTED_AT=$(date +%s)" >> "$GITHUB_ENV"
+
       - name: Checkout target commit
         uses: >-
-          actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+          actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
@@ -121,6 +127,82 @@ jobs:
             exit 2
           fi
           echo "WINDOW_SECONDS=$WINDOW_SECONDS" >> "$GITHUB_ENV"
+
+      - name: Render target and parent desired state once
+        id: render
+        run: |
+          set -euo pipefail
+          umask 077
+          TARGET_SHA="$GITHUB_SHA"
+          if ! printf '%s' "$TARGET_SHA" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "target SHA is not a full lowercase commit SHA" >&2
+            exit 2
+          fi
+          PARENT_SHA=$(git rev-parse "$TARGET_SHA^")
+          PARENT_ROOT="$RUNNER_TEMP/health-gate-parent"
+          RENDER_CACHE="$RUNNER_TEMP/health-gate-render-cache.json"
+          git worktree add --detach "$PARENT_ROOT" "$PARENT_SHA" >/dev/null
+          chmod 700 "$PARENT_ROOT"
+          RENDER_STATUS=failed
+          NOW=$(date +%s)
+          JOB_DEADLINE=$((HEALTH_GATE_JOB_STARTED_AT + 1500 - 60))
+          RENDER_TIMEOUT_SECONDS=$((JOB_DEADLINE - NOW))
+          if [ "$RENDER_TIMEOUT_SECONDS" -gt 300 ]; then
+            RENDER_TIMEOUT_SECONDS=300
+          fi
+          if [ "$RENDER_TIMEOUT_SECONDS" -gt 0 ]; then
+            if python3 - "$RENDER_TIMEOUT_SECONDS" \
+              "$TARGET_SHA" "$PARENT_SHA" "$RENDER_CACHE" \
+              "$GITHUB_WORKSPACE" "$PARENT_ROOT" <<'PYTHON'
+          import os
+          import signal
+          import subprocess
+          import sys
+
+          timeout = float(sys.argv[1])
+          command = [
+              "python3", "-B", "scripts/health-gate-attest.py",
+              "--target-sha", sys.argv[2], "--parent-sha", sys.argv[3],
+              "--render-cache-output", sys.argv[4],
+              "--repo-root", sys.argv[5], "--parent-root", sys.argv[6],
+          ]
+          try:
+              process = subprocess.Popen(command, start_new_session=True)
+          except OSError:
+              sys.exit(127)
+          try:
+              status = process.wait(timeout=timeout)
+          except subprocess.TimeoutExpired:
+              try:
+                  os.killpg(process.pid, signal.SIGTERM)
+              except ProcessLookupError:
+                  pass
+              try:
+                  process.wait(timeout=1)
+              except subprocess.TimeoutExpired:
+                  try:
+                      os.killpg(process.pid, signal.SIGKILL)
+                  except ProcessLookupError:
+                      pass
+                  process.wait()
+              sys.exit(124)
+          sys.exit(status)
+          PYTHON
+            then
+              RENDER_STATUS=ready
+            else
+              rm -f "$RENDER_CACHE"
+              echo "Desired-state render failed or timed out; the poll will report an inconclusive result."
+            fi
+          else
+            echo "No job time remains for desired-state rendering; the poll will report an inconclusive result."
+          fi
+          {
+            echo "HEALTH_GATE_PARENT_SHA=$PARENT_SHA"
+            echo "HEALTH_GATE_PARENT_ROOT=$PARENT_ROOT"
+            echo "HEALTH_GATE_RENDER_CACHE=$RENDER_CACHE"
+            echo "HEALTH_GATE_RENDER_STATUS=$RENDER_STATUS"
+          } >> "$GITHUB_ENV"
 
       - name: Poll Flux conditions and classify
         id: poll
@@ -508,73 +590,55 @@ jobs:
              sample_valid:$samplevalid, superseded:($p.superseded == true)}
           JQ_CLASSIFY_EOF
           )
+          JQ_CLASSIFY_WITH_SUPERSEDED=".superseded = (.superseded or \$superseded) | $JQ_CLASSIFY"
 
           TARGET_SHA="$GITHUB_SHA"
-          if ! printf '%s' "$TARGET_SHA" | grep -Eq '^[0-9a-f]{40}$'; then
-            echo "target SHA is not a full lowercase commit SHA" >&2
-            exit 2
-          fi
-          PARENT_SHA=$(git rev-parse "$TARGET_SHA^")
-          PARENT_ROOT="$RUNNER_TEMP/health-gate-parent"
-          git worktree add --detach "$PARENT_ROOT" "$PARENT_SHA" >/dev/null
-          chmod 700 "$PARENT_ROOT"
-          PRIVATE="$RUNNER_TEMP/health-gate-private"
-          install -d -m 700 "$PRIVATE"
+          PARENT_SHA="$HEALTH_GATE_PARENT_SHA"
+          PARENT_ROOT="$HEALTH_GATE_PARENT_ROOT"
+          RENDER_CACHE="$HEALTH_GATE_RENDER_CACHE"
+          PRIVATE=$(mktemp -d "$RUNNER_TEMP/health-gate-private.XXXXXX")
+          chmod 700 "$PRIVATE"
           cleanup() {
             git worktree remove --force "$PARENT_ROOT" >/dev/null 2>&1 || true
             rm -rf "$PRIVATE"
           }
           trap cleanup EXIT
 
-          if [ -z "$WINDOW_SECONDS" ]; then WINDOW_SECONDS=900; fi
-          DEADLINE=$(( $(date +%s) + WINDOW_SECONDS ))
-          OUTCOME="inconclusive"
-          LAST_RESULT='{"all_ready":false,"stalled_or_failed":[],"diagnostics":[],"sample_valid":false,"superseded":false}'
-          LATEST_ATTESTATION_COUNTS='{}'
-          EXTRA_SUPERSEDED=false
-          POLL_INTERVAL_SECONDS=30
+          cat > "$PRIVATE/run-bounded.py" <<'PYTHON'
+          import os
+          import signal
+          import subprocess
+          import sys
 
-          collect_snapshot() {
-            destination="$1"
-            install -d -m 700 "$destination"
-            kubectl get kustomizations.kustomize.toolkit.fluxcd.io \
-              -A --chunk-size=500 -o json \
-              > "$destination/kustomizations.json" \
-              2>"$PRIVATE/kubectl.err" || return 1
-            kubectl get helmreleases.helm.toolkit.fluxcd.io \
-              -A --chunk-size=500 -o json \
-              > "$destination/helmreleases.json" \
-              2>"$PRIVATE/kubectl.err" || return 1
-            kubectl get gitrepositories.source.toolkit.fluxcd.io \
-              -A --chunk-size=500 -o json \
-              > "$destination/gitrepositories.json" \
-              2>"$PRIVATE/kubectl.err" || return 1
-            kubectl get ocirepositories.source.toolkit.fluxcd.io \
-              -A --chunk-size=500 -o json \
-              > "$destination/ocirepositories.json" \
-              2>"$PRIVATE/kubectl.err" || return 1
-            kubectl get helmrepositories.source.toolkit.fluxcd.io \
-              -A --chunk-size=500 -o json \
-              > "$destination/helmrepositories.json" \
-              2>"$PRIVATE/kubectl.err" || return 1
-            kubectl get helmcharts.source.toolkit.fluxcd.io \
-              -A --chunk-size=500 -o json \
-              > "$destination/helmcharts.json" \
-              2>"$PRIVATE/kubectl.err" || return 1
-          }
-
-          snapshot_json() {
-            before_dir="$1"
-            after_dir="$2"
-            output="$3"
-            main_before="$4"
-            main_after="$5"
-            main_superseded="$6"
-            python3 -B - "$before_dir" "$after_dir" "$output" \
-              "$main_before" "$main_after" "$main_superseded" <<'PYTHON'
+          timeout = float(sys.argv[1])
+          command = sys.argv[2:]
+          try:
+              process = subprocess.Popen(command, start_new_session=True)
+          except OSError:
+              sys.exit(127)
+          try:
+              status = process.wait(timeout=timeout)
+          except subprocess.TimeoutExpired:
+              try:
+                  os.killpg(process.pid, signal.SIGTERM)
+              except ProcessLookupError:
+                  pass
+              try:
+                  process.wait(timeout=0.5)
+              except subprocess.TimeoutExpired:
+                  try:
+                      os.killpg(process.pid, signal.SIGKILL)
+                  except ProcessLookupError:
+                      pass
+                  process.wait()
+              sys.exit(124)
+          sys.exit(status)
+          PYTHON
+          cat > "$PRIVATE/snapshot-json.py" <<'PYTHON'
           import json
           import pathlib
           import sys
+
           before = pathlib.Path(sys.argv[1])
           after = pathlib.Path(sys.argv[2])
           result = {}
@@ -592,120 +656,246 @@ jobs:
               json.dumps(result, separators=(",", ":"))
           )
           PYTHON
-            chmod 600 "$output"
+          chmod 600 "$PRIVATE"/*.py
+
+          run_bounded() {
+            local requested="$1"
+            shift
+            local remaining budget
+            remaining=$((POLL_WALL_DEADLINE - SECONDS))
+            if [ "$remaining" -le 1 ]; then return 124; fi
+            budget="$requested"
+            if [ "$budget" -ge "$remaining" ]; then
+              budget=$((remaining - 1))
+            fi
+            if [ "$budget" -le 0 ]; then return 124; fi
+            python3 "$PRIVATE/run-bounded.py" "$budget" "$@"
           }
 
-          while [ "$(date +%s)" -lt "$DEADLINE" ]; do
-            if ! MAIN_BEFORE=$(gh api \
-              "repos/$GITHUB_REPOSITORY/branches/main" \
-              --jq '.commit.sha' 2>"$PRIVATE/gh.err"); then
-              echo "WARNING: authenticated main read failed; retrying"
-              sleep "$POLL_INTERVAL_SECONDS"
-              continue
-            fi
-            if [ "$MAIN_BEFORE" != "$TARGET_SHA" ]; then
-              EXTRA_SUPERSEDED=true
-              LAST_RESULT=$(jq -cn --arg target "$TARGET_SHA" '{
-                target_sha:$target,
-                sample_valid:false,
-                superseded:true,
-                observed:{kustomizations:[],helmreleases:[],gitrepositories:[],ocirepositories:[],helmrepositories:[],helmcharts:[]},
-                kustomizations:[],
-                helm_releases:[],
-                diagnostics:[{kind:"Main",namespace:"",name:"main",code:"superseded",reason:"main-advanced"}]
-              } | '"$JQ_CLASSIFY")
-              OUTCOME="inconclusive"
-              break
-            fi
+          record_api_error() {
+            LAST_RESULT=$(printf \
+              '{"target_sha":"%s","all_ready":false,"sample_valid":false,"superseded":false,"stalled_or_failed":[],"diagnostics":[{"kind":"Sample","namespace":"","name":"","code":"api-error","reason":"api-error"}]}' \
+              "$TARGET_SHA")
+          }
 
-            BEFORE_DIR="$PRIVATE/before"
-            AFTER_DIR="$PRIVATE/after"
-            if ! collect_snapshot "$BEFORE_DIR"; then
-              echo "WARNING: pre-render Kubernetes snapshot failed; retrying"
-              sleep "$POLL_INTERVAL_SECONDS"
-              continue
+          if [ -z "$WINDOW_SECONDS" ]; then WINDOW_SECONDS=900; fi
+          POLL_WALL_DEADLINE=$((SECONDS + WINDOW_SECONDS))
+          if ! run_bounded 5 date +%s > "$PRIVATE/now"; then
+            CURRENT_NOW=0
+          else
+            CURRENT_NOW=$(<"$PRIVATE/now")
+          fi
+          POLL_BUDGET="$WINDOW_SECONDS"
+          if [[ "$HEALTH_GATE_JOB_STARTED_AT" =~ ^[0-9]+$ ]] \
+            && [[ "$CURRENT_NOW" =~ ^[0-9]+$ ]]; then
+            JOB_BUDGET=$((HEALTH_GATE_JOB_STARTED_AT + 1500 - CURRENT_NOW - 60))
+            if [ "$JOB_BUDGET" -lt "$POLL_BUDGET" ]; then
+              POLL_BUDGET="$JOB_BUDGET"
             fi
-            if ! snapshot_json "$BEFORE_DIR" "$BEFORE_DIR" \
-              "$PRIVATE/pre-render-snapshots.json" "$MAIN_BEFORE" "" false; then
-              echo "WARNING: pre-render snapshot JSON was malformed; retrying"
-              sleep "$POLL_INTERVAL_SECONDS"
-              continue
-            fi
-            if ! python3 -B scripts/health-gate-attest.py \
-              --target-sha "$TARGET_SHA" --parent-sha "$PARENT_SHA" \
-              --snapshots "$PRIVATE/pre-render-snapshots.json" \
-              --repo-root "$GITHUB_WORKSPACE" --parent-root "$PARENT_ROOT" \
-              > "$PRIVATE/prepared-proof.json"; then
-              echo "WARNING: pre-render attestation execution failed; retrying"
-              sleep "$POLL_INTERVAL_SECONDS"
-              continue
-            fi
+          fi
+          if [ "$POLL_BUDGET" -lt 0 ]; then POLL_BUDGET=0; fi
+          POLL_WALL_DEADLINE=$((SECONDS + POLL_BUDGET))
+          DEADLINE=$((CURRENT_NOW + POLL_BUDGET))
+          OUTCOME="inconclusive"
+          LAST_RESULT='{"all_ready":false,"stalled_or_failed":[],"diagnostics":[],"sample_valid":false,"superseded":false}'
+          LATEST_ATTESTATION_COUNTS='{}'
+          EXTRA_SUPERSEDED=false
+          POLL_INTERVAL_SECONDS=30
 
-            if ! collect_snapshot "$AFTER_DIR"; then
-              echo "WARNING: post-render Kubernetes snapshot failed; retrying"
-              sleep "$POLL_INTERVAL_SECONDS"
-              continue
-            fi
-            if ! MAIN_AFTER=$(gh api \
-              "repos/$GITHUB_REPOSITORY/branches/main" \
-              --jq '.commit.sha' 2>"$PRIVATE/gh.err"); then
-              echo "WARNING: closing main read failed; sample discarded"
-              sleep "$POLL_INTERVAL_SECONDS"
-              continue
-            fi
-            if [ "$MAIN_AFTER" != "$TARGET_SHA" ]; then
-              EXTRA_SUPERSEDED=true
-            fi
-            if ! snapshot_json "$BEFORE_DIR" "$AFTER_DIR" \
-              "$PRIVATE/sample.json" "$MAIN_BEFORE" "$MAIN_AFTER" \
-              "$EXTRA_SUPERSEDED"; then
-              echo "WARNING: sampled snapshot JSON was malformed; retrying"
-              sleep "$POLL_INTERVAL_SECONDS"
-              continue
-            fi
-            if ! python3 -B scripts/health-gate-attest.py \
-              --target-sha "$TARGET_SHA" --parent-sha "$PARENT_SHA" \
-              --snapshots "$PRIVATE/sample.json" \
-              --repo-root "$GITHUB_WORKSPACE" --parent-root "$PARENT_ROOT" \
-              > "$PRIVATE/proof.json"; then
-              echo "WARNING: attestation execution failed; retrying"
-              sleep "$POLL_INTERVAL_SECONDS"
-              continue
-            fi
-            LATEST_ATTESTATION_COUNTS=$(jq -c \
-              '{total:.counts.helmreleases_total,
-               supported:.counts.helmreleases_supported,
-               unsupported:.counts.helmreleases_unsupported,
-               reason_codes:.counts.reason_codes}' "$PRIVATE/proof.json")
-            if ! cmp -s \
-              <(jq -S '{target_sha,parent_sha,kustomizations,helm_releases}' \
-                "$PRIVATE/prepared-proof.json") \
-              <(jq -S '{target_sha,parent_sha,kustomizations,helm_releases}' \
-                "$PRIVATE/proof.json"); then
-              echo "WARNING: render inputs changed during sample; discarding"
-              sleep "$POLL_INTERVAL_SECONDS"
-              continue
-            fi
-            if ! LAST_RESULT=$(jq -c \
-              --argjson superseded "$EXTRA_SUPERSEDED" \
-              '.superseded = (.superseded or $superseded) | '"$JQ_CLASSIFY" \
-              "$PRIVATE/proof.json" 2>"$PRIVATE/jq.err"); then
-              echo "WARNING: sanitized proof could not be classified; retrying"
-              sleep "$POLL_INTERVAL_SECONDS"
-              continue
-            fi
-            SUPERSEDED=$(printf '%s' "$LAST_RESULT" | jq -r '.superseded')
-            if [ "$SUPERSEDED" = "true" ]; then
-              OUTCOME="inconclusive"
-              break
-            fi
-            ALL_READY=$(printf '%s' "$LAST_RESULT" | jq -r '.all_ready')
-            if [ "$ALL_READY" = "true" ]; then
-              OUTCOME="healthy"
-              break
-            fi
-            sleep "$POLL_INTERVAL_SECONDS"
-          done
+          collect_snapshot() {
+            local destination="$1"
+            run_bounded 5 mkdir -p "$destination" || return 1
+            run_bounded 5 chmod 700 "$destination" || return 1
+            run_bounded 30 kubectl get kustomizations.kustomize.toolkit.fluxcd.io \
+              -A --chunk-size=500 -o json \
+              > "$destination/kustomizations.json" \
+              2>"$PRIVATE/kubectl.err" || return 1
+            run_bounded 30 kubectl get helmreleases.helm.toolkit.fluxcd.io \
+              -A --chunk-size=500 -o json \
+              > "$destination/helmreleases.json" \
+              2>"$PRIVATE/kubectl.err" || return 1
+            run_bounded 30 kubectl get gitrepositories.source.toolkit.fluxcd.io \
+              -A --chunk-size=500 -o json \
+              > "$destination/gitrepositories.json" \
+              2>"$PRIVATE/kubectl.err" || return 1
+            run_bounded 30 kubectl get ocirepositories.source.toolkit.fluxcd.io \
+              -A --chunk-size=500 -o json \
+              > "$destination/ocirepositories.json" \
+              2>"$PRIVATE/kubectl.err" || return 1
+            run_bounded 30 kubectl get helmrepositories.source.toolkit.fluxcd.io \
+              -A --chunk-size=500 -o json \
+              > "$destination/helmrepositories.json" \
+              2>"$PRIVATE/kubectl.err" || return 1
+            run_bounded 30 kubectl get helmcharts.source.toolkit.fluxcd.io \
+              -A --chunk-size=500 -o json \
+              > "$destination/helmcharts.json" \
+              2>"$PRIVATE/kubectl.err" || return 1
+          }
+
+          snapshot_json() {
+            local before_dir="$1"
+            local after_dir="$2"
+            local output="$3"
+            local main_before="$4"
+            local main_after="$5"
+            local main_superseded="$6"
+            run_bounded 10 python3 -B "$PRIVATE/snapshot-json.py" \
+              "$before_dir" "$after_dir" "$output" \
+              "$main_before" "$main_after" "$main_superseded"
+          }
+
+          if [ "$HEALTH_GATE_RENDER_STATUS" != ready ] || [ ! -s "$RENDER_CACHE" ]; then
+            LAST_RESULT=$(printf \
+              '{"target_sha":"%s","all_ready":false,"sample_valid":false,"superseded":false,"stalled_or_failed":[],"diagnostics":[{"kind":"Sample","namespace":"","name":"","code":"render-cache-unavailable","reason":"render-cache-unavailable"}]}' \
+              "$TARGET_SHA")
+          else
+            while :; do
+              if ! run_bounded 5 date +%s > "$PRIVATE/now"; then
+                record_api_error
+                break
+              fi
+              CURRENT_NOW=$(<"$PRIVATE/now")
+              if ! [[ "$CURRENT_NOW" =~ ^[0-9]+$ ]] \
+                || [ "$CURRENT_NOW" -ge "$DEADLINE" ]; then
+                break
+              fi
+              if ! run_bounded 15 gh api \
+                "repos/$GITHUB_REPOSITORY/branches/main" \
+                --jq '.commit.sha' > "$PRIVATE/main-before" 2>"$PRIVATE/gh.err"; then
+                record_api_error
+                echo "WARNING: authenticated main read failed; retrying"
+                run_bounded "$POLL_INTERVAL_SECONDS" sleep "$POLL_INTERVAL_SECONDS" || true
+                continue
+              fi
+              MAIN_BEFORE=$(<"$PRIVATE/main-before")
+              if [ "$MAIN_BEFORE" != "$TARGET_SHA" ]; then
+                EXTRA_SUPERSEDED=true
+                LAST_RESULT=$(printf \
+                  '{"target_sha":"%s","all_ready":false,"sample_valid":false,"superseded":true,"stalled_or_failed":[],"diagnostics":[{"kind":"Main","namespace":"","name":"main","code":"superseded","reason":"main-advanced"}]}' \
+                  "$TARGET_SHA")
+                break
+              fi
+
+              BEFORE_DIR="$PRIVATE/before"
+              AFTER_DIR="$PRIVATE/after"
+              if ! collect_snapshot "$BEFORE_DIR"; then
+                record_api_error
+                echo "WARNING: pre-render Kubernetes snapshot failed; retrying"
+                run_bounded "$POLL_INTERVAL_SECONDS" sleep "$POLL_INTERVAL_SECONDS" || true
+                continue
+              fi
+              if ! snapshot_json "$BEFORE_DIR" "$BEFORE_DIR" \
+                "$PRIVATE/pre-render-snapshots.json" "$MAIN_BEFORE" "" false; then
+                record_api_error
+                echo "WARNING: pre-render snapshot JSON was malformed; retrying"
+                run_bounded "$POLL_INTERVAL_SECONDS" sleep "$POLL_INTERVAL_SECONDS" || true
+                continue
+              fi
+              if ! run_bounded 120 python3 -B scripts/health-gate-attest.py \
+                --target-sha "$TARGET_SHA" --parent-sha "$PARENT_SHA" \
+                --snapshots "$PRIVATE/pre-render-snapshots.json" \
+                --render-cache "$RENDER_CACHE" \
+                > "$PRIVATE/prepared-proof.json"; then
+                record_api_error
+                echo "WARNING: pre-render attestation execution failed; retrying"
+                run_bounded "$POLL_INTERVAL_SECONDS" sleep "$POLL_INTERVAL_SECONDS" || true
+                continue
+              fi
+
+              if ! collect_snapshot "$AFTER_DIR"; then
+                record_api_error
+                echo "WARNING: post-render Kubernetes snapshot failed; retrying"
+                run_bounded "$POLL_INTERVAL_SECONDS" sleep "$POLL_INTERVAL_SECONDS" || true
+                continue
+              fi
+              if ! run_bounded 15 gh api \
+                "repos/$GITHUB_REPOSITORY/branches/main" \
+                --jq '.commit.sha' > "$PRIVATE/main-after" 2>"$PRIVATE/gh.err"; then
+                record_api_error
+                echo "WARNING: closing main read failed; sample discarded"
+                run_bounded "$POLL_INTERVAL_SECONDS" sleep "$POLL_INTERVAL_SECONDS" || true
+                continue
+              fi
+              MAIN_AFTER=$(<"$PRIVATE/main-after")
+              if [ "$MAIN_AFTER" != "$TARGET_SHA" ]; then
+                EXTRA_SUPERSEDED=true
+              fi
+              if ! snapshot_json "$BEFORE_DIR" "$AFTER_DIR" \
+                "$PRIVATE/sample.json" "$MAIN_BEFORE" "$MAIN_AFTER" \
+                "$EXTRA_SUPERSEDED"; then
+                record_api_error
+                echo "WARNING: sampled snapshot JSON was malformed; retrying"
+                run_bounded "$POLL_INTERVAL_SECONDS" sleep "$POLL_INTERVAL_SECONDS" || true
+                continue
+              fi
+              if ! run_bounded 120 python3 -B scripts/health-gate-attest.py \
+                --target-sha "$TARGET_SHA" --parent-sha "$PARENT_SHA" \
+                --snapshots "$PRIVATE/sample.json" \
+                --render-cache "$RENDER_CACHE" \
+                > "$PRIVATE/proof.json"; then
+                record_api_error
+                echo "WARNING: attestation execution failed; retrying"
+                run_bounded "$POLL_INTERVAL_SECONDS" sleep "$POLL_INTERVAL_SECONDS" || true
+                continue
+              fi
+              if ! run_bounded 10 jq -c \
+                '{total:.counts.helmreleases_total,
+                 supported:.counts.helmreleases_supported,
+                 unsupported:.counts.helmreleases_unsupported,
+                 reason_codes:.counts.reason_codes}' "$PRIVATE/proof.json" \
+                > "$PRIVATE/counts.json"; then
+                record_api_error
+                run_bounded "$POLL_INTERVAL_SECONDS" sleep "$POLL_INTERVAL_SECONDS" || true
+                continue
+              fi
+              LATEST_ATTESTATION_COUNTS=$(<"$PRIVATE/counts.json")
+              if ! run_bounded 10 jq -S \
+                '{target_sha,parent_sha,kustomizations,helm_releases}' \
+                "$PRIVATE/prepared-proof.json" > "$PRIVATE/prepared-key.json" \
+                || ! run_bounded 10 jq -S \
+                  '{target_sha,parent_sha,kustomizations,helm_releases}' \
+                  "$PRIVATE/proof.json" > "$PRIVATE/proof-key.json" \
+                || ! run_bounded 5 cmp -s \
+                  "$PRIVATE/prepared-key.json" "$PRIVATE/proof-key.json"; then
+                record_api_error
+                echo "WARNING: render inputs changed or could not be compared; discarding"
+                run_bounded "$POLL_INTERVAL_SECONDS" sleep "$POLL_INTERVAL_SECONDS" || true
+                continue
+              fi
+              if ! run_bounded 10 jq -c \
+                --argjson superseded "$EXTRA_SUPERSEDED" \
+                "$JQ_CLASSIFY_WITH_SUPERSEDED" \
+                "$PRIVATE/proof.json" > "$PRIVATE/result.json" 2>"$PRIVATE/jq.err"; then
+                record_api_error
+                echo "WARNING: sanitized proof could not be classified; retrying"
+                run_bounded "$POLL_INTERVAL_SECONDS" sleep "$POLL_INTERVAL_SECONDS" || true
+                continue
+              fi
+              LAST_RESULT=$(<"$PRIVATE/result.json")
+              if ! run_bounded 10 jq -r '.superseded' "$PRIVATE/result.json" \
+                > "$PRIVATE/superseded"; then
+                record_api_error
+                run_bounded "$POLL_INTERVAL_SECONDS" sleep "$POLL_INTERVAL_SECONDS" || true
+                continue
+              fi
+              SUPERSEDED=$(<"$PRIVATE/superseded")
+              if [ "$SUPERSEDED" = "true" ]; then
+                break
+              fi
+              if ! run_bounded 10 jq -r '.all_ready' "$PRIVATE/result.json" \
+                > "$PRIVATE/all-ready"; then
+                record_api_error
+                run_bounded "$POLL_INTERVAL_SECONDS" sleep "$POLL_INTERVAL_SECONDS" || true
+                continue
+              fi
+              ALL_READY=$(<"$PRIVATE/all-ready")
+              if [ "$ALL_READY" = "true" ]; then
+                OUTCOME="healthy"
+                break
+              fi
+              run_bounded "$POLL_INTERVAL_SECONDS" sleep "$POLL_INTERVAL_SECONDS" || true
+            done
+          fi
 
           if [ "$OUTCOME" = "healthy" ]; then
             ALL_READY=true
@@ -927,3 +1117,28 @@ jobs:
             echo ""
             echo "$DETAIL"
           } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
+          if command -v kubectl >/dev/null 2>&1 \
+            && [ -n "${KUBECONFIG:-}" ]; then
+            NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null \
+              || printf '1970-01-01T00:00:00Z')
+            kubectl create -f - <<EOF || true
+          apiVersion: v1
+          kind: Event
+          metadata:
+            name: health-gate-inconclusive-backstop-$GITHUB_RUN_ID
+            namespace: flux-system
+          involvedObject:
+            apiVersion: kustomize.toolkit.fluxcd.io/v1
+            kind: Kustomization
+            name: cluster-apps
+            namespace: flux-system
+          reason: HealthGateInconclusive
+          message: "$DETAIL"
+          type: Warning
+          firstTimestamp: "$NOW"
+          lastTimestamp: "$NOW"
+          count: 1
+          source:
+            component: health-gate.yaml
+          EOF
+          fi

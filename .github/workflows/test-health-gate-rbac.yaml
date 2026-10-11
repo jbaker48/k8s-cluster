@@ -87,6 +87,15 @@ jobs:
               expect_denied "$verb" "$resource"
             done
           done
+          for namespace in flux-system media; do
+            for resource in secrets configmaps; do
+              for verb in get list; do
+                answer=$(kubectl auth can-i "$verb" "$resource" \
+                  --namespace "$namespace")
+                test "$answer" = "no"
+              done
+            done
+          done
 
       - name: Verify source and Flux resource mutations are denied
         run: |
@@ -118,5 +127,20 @@ jobs:
             helmcharts.source.toolkit.fluxcd.io; do
             for verb in create update patch delete; do
               expect_denied "$verb" "$resource"
+            done
+          done
+          for namespace in flux-system media; do
+            for resource in \
+              kustomizations.kustomize.toolkit.fluxcd.io \
+              helmreleases.helm.toolkit.fluxcd.io \
+              gitrepositories.source.toolkit.fluxcd.io \
+              ocirepositories.source.toolkit.fluxcd.io \
+              helmrepositories.source.toolkit.fluxcd.io \
+              helmcharts.source.toolkit.fluxcd.io; do
+              for verb in create update patch delete; do
+                answer=$(kubectl auth can-i "$verb" "$resource" \
+                  --namespace "$namespace")
+                test "$answer" = "no"
+              done
             done
           done

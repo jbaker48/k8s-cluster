@@ -15,6 +15,12 @@ Both codes remain visible in candidate-failure diagnostics when every other attr
 
 The fixed concurrency group `health-gate-main` serializes health-gate runs, with cancellation disabled. It does not serialize owner merges or other writers to `main`, so it does not satisfy the base-SHA merge condition.
 
+GitHub keeps at most one pending run for the health-gate-main concurrency group when cancel-in-progress is false; if another run becomes pending, GitHub cancels the older pending run. A pending run cancelled this way executes no steps and has no verdict. Cancellation is not a pass, and a cancellation notification step is unnecessary because no step runs while the workflow is pending.
+
+## Owner decision
+
+The current evidence shows 0 of 61 HelmReleases attestable. Until that changes, every merge ends inconclusive and emits HealthGateInconclusive; Robusta forwards that Event as a Slack page. The owner must accept that notification volume or decide a notification policy. This change does not alter the policy or Robusta configuration.
+
 ## What can be attested
 
 The bounded producer supports local reproducible renders and relevant objects whose effective inputs can be reproduced from Git. Supported HelmReleases use inline `spec.values`, resolvable literal post-build substitutions, and an exact SemVer tag from an OCIRepository whose current artifact revision supplies a full SHA-256 OCI digest. The producer independently binds the rendered HR and source specs to the live object UID and generation; the OCI attempt revision and digest must match the sampled source artifact.

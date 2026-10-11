@@ -1,7 +1,9 @@
 {
   "expected": {
     "all_ready": false,
-    "diagnostic_codes": [],
+    "diagnostic_codes": [
+      "kustomization-owner-inventory-invalid"
+    ],
     "sample_valid": false,
     "superseded": false
   },

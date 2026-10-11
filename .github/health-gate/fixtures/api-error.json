@@ -2,7 +2,9 @@
   "expected": {
     "all_ready": false,
     "diagnostic_codes": [
-      "api-error"
+      "api-error",
+      "helm-attempt-not-settled",
+      "kustomization-owner-inventory-invalid"
     ],
     "sample_valid": false,
     "superseded": false
@@ -11,8 +13,6 @@
   "poll_expected": {
     "all_ready": false,
     "command_trace": [
-      "git-rev-parse",
-      "git-worktree-add",
       "clock:100",
       "clock:100",
       "gh-main-error",
@@ -26,7 +26,7 @@
       "producer-attest",
       "jq-classifier-pass",
       "sleep",
-      "clock:101",
+      "clock:160",
       "git-diff",
       "git-worktree-remove",
       "clock-utc",
@@ -43,7 +43,7 @@
       "100",
       "100",
       "100",
-      "101"
+      "160"
     ],
     "kubectl": [
       "list",
@@ -328,5 +328,6 @@
     "sample_valid": false,
     "superseded": false,
     "target_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-  }
+  },
+  "backstop_scenario": "failure-after-auth-before-inconclusive-notification"
 }

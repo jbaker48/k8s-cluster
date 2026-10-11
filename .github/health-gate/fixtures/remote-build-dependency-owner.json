@@ -2,6 +2,9 @@
   "expected": {
     "all_ready": false,
     "diagnostic_codes": [
+      "empty-desired-set",
+      "inventory-closure-invalid",
+      "owner-inventory-invalid",
       "remote-build-dependency"
     ],
     "sample_valid": false,
@@ -12,6 +15,7 @@
   "producer_expected": {
     "candidate_count": 0,
     "diagnostic_codes": [
+      "empty-desired-set",
       "remote-build-dependency"
     ],
     "helmreleases_supported": 0,

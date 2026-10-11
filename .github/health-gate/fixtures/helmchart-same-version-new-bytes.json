@@ -2,6 +2,11 @@
   "expected": {
     "all_ready": false,
     "diagnostic_codes": [
+      "helmchart-artifact-unbound",
+      "kustomization-metadata-mismatch",
+      "kustomization-not-settled-at-target",
+      "kustomization-owner-inventory-invalid",
+      "revision-not-target",
       "unsupported-chart-source"
     ],
     "sample_valid": false,
@@ -12,8 +17,9 @@
   "producer_expected": {
     "candidate_count": 0,
     "diagnostic_codes": [
-      "unsupported-chart-source",
-      "helmchart-artifact-unbound"
+      "helmchart-artifact-unbound",
+      "kustomization-metadata-mismatch",
+      "unsupported-chart-source"
     ],
     "helmreleases_supported": 0,
     "helmreleases_total": 1,
@@ -279,7 +285,8 @@
               "lastAttemptedGeneration": 1,
               "lastAttemptedRevision": "1.2.3+dddddddddddd",
               "lastAttemptedRevisionDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
-              "observedGeneration": 1
+              "observedGeneration": 1,
+              "helmChart": "flux-system/demo-generated"
             }
           }
         ],
@@ -600,7 +607,8 @@
               "lastAttemptedGeneration": 1,
               "lastAttemptedRevision": "1.2.3+dddddddddddd",
               "lastAttemptedRevisionDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
-              "observedGeneration": 1
+              "observedGeneration": 1,
+              "helmChart": "flux-system/demo-generated"
             }
           }
         ],
@@ -884,9 +892,6 @@
           "values": {
             "replicas": 2
           }
-        },
-        "status": {
-          "helmChart": "flux-system/demo-generated"
         }
       },
       {

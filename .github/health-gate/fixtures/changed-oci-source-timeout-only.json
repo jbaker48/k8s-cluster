@@ -1,0 +1,52 @@
+{
+  "base_fixture": "cas-unavailable-with-otherwise-complete-evidence",
+  "name": "changed-oci-source-timeout-only",
+  "poll_scenario": null,
+  "producer_expected": {
+    "candidate_count": 1,
+    "changed_inputs": true,
+    "diagnostic_codes": [
+      "baseline-missing",
+      "merge-cas-unavailable"
+    ],
+    "helmreleases_supported": 1,
+    "helmreleases_total": 1,
+    "helmreleases_unsupported": 0,
+    "reason_codes": {
+      "supported": 1
+    }
+  },
+  "producer_mutations": [
+    {
+      "path": [
+        "target_render",
+        3,
+        "spec",
+        "timeout"
+      ],
+      "value": "3m"
+    },
+    {
+      "path": [
+        "snapshot",
+        "before",
+        "ocirepositories",
+        0,
+        "spec",
+        "timeout"
+      ],
+      "value": "3m"
+    },
+    {
+      "path": [
+        "snapshot",
+        "after",
+        "ocirepositories",
+        0,
+        "spec",
+        "timeout"
+      ],
+      "value": "3m"
+    }
+  ]
+}

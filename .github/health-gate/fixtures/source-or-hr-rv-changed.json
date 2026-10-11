@@ -2,7 +2,12 @@
   "expected": {
     "all_ready": false,
     "diagnostic_codes": [
-      "resource-changed-during-sample"
+      "helm-attempt-not-settled",
+      "kustomization-metadata-mismatch",
+      "kustomization-not-settled-at-target",
+      "kustomization-owner-inventory-invalid",
+      "resource-changed-during-sample",
+      "revision-not-target"
     ],
     "sample_valid": false,
     "superseded": false
@@ -12,6 +17,7 @@
   "producer_expected": {
     "candidate_count": 0,
     "diagnostic_codes": [
+      "kustomization-metadata-mismatch",
       "resource-changed-during-sample"
     ],
     "helmreleases_supported": 1,

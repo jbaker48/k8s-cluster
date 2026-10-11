@@ -8,8 +8,6 @@
   "name": "stable-supported-target",
   "poll_expected": {
     "command_trace": [
-      "git-rev-parse",
-      "git-worktree-add",
       "clock:100",
       "clock:100",
       "gh-main-target",

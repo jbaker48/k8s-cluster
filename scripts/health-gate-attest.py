@@ -274,6 +274,7 @@ def legacy_chart_diagnostics(target: list[dict[str, Any]], live: dict[str, list[
                               ) -> list[dict[str, Any]]:
     rendered_repositories = index(target, "HelmRepository")
     live_repositories = index(live["helmrepositories"], "HelmRepository")
+    live_releases = index(live["helmreleases"], "HelmRelease")
     live_charts = live["helmcharts"]
     result = []
     for release in target:
@@ -334,7 +335,8 @@ def legacy_chart_diagnostics(target: list[dict[str, Any]], live: dict[str, list[
             )
             if not chart_reference_match:
                 reason_codes.append("helmchart-reference-mismatch")
-            status_reference = ((release.get("status") or {}).get("helmChart"))
+            live_release = live_releases.get((namespace, name)) or {}
+            status_reference = ((live_release.get("status") or {}).get("helmChart"))
             status_ident = tuple(str(part) for part in status_reference.split("/", 1)) if (
                 isinstance(status_reference, str) and status_reference.count("/") == 1
             ) else None
@@ -542,12 +544,10 @@ def contains_flux_kustomization(directory: Path) -> bool:
 
 
 def input_fingerprint(hr_spec: dict[str, Any], source_spec: dict[str, Any] | None) -> str:
-    source = source_spec or {}
-    return fingerprint({
-        "chartRef": hr_spec.get("chartRef"),
-        "values": hr_spec.get("values", {}),
-        "source": {"url": source.get("url"), "ref": source.get("ref")},
-    })
+    # Every spec field accepted by the producer participates in attribution.
+    # This intentionally makes changed-input detection conservative for
+    # reconciliation and source settings as well as chart selection and values.
+    return fingerprint({"helmReleaseSpec": hr_spec, "sourceSpec": source_spec or {}})
 
 
 def normalized_ks_spec(spec: Any) -> Any:
@@ -1294,6 +1294,34 @@ def run_preflight_fixture(path: Path) -> dict[str, Any]:
     return {"cases": results, "production_build_cases": production_build_results}
 
 
+def render_cache(target_sha: str, parent_sha: str, repo_root: Path, parent_root: Path) -> dict[str, Any]:
+    cache: dict[str, Any] = {
+        "schema_version": 1,
+        "target_sha": target_sha,
+        "parent_sha": parent_sha,
+    }
+    try:
+        cache["target_render"], cache["owner_errors"] = render(repo_root.resolve())
+        cache["parent_render"], cache["parent_owner_errors"] = render(parent_root.resolve())
+    except Invalid as exc:
+        cache["render_error"] = exc.code
+    return cache
+
+
+def write_private_json(path: Path, value: dict[str, Any]) -> None:
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+            json.dump(value, output, sort_keys=True, separators=(",", ":"))
+            output.write("\n")
+        os.replace(temporary, path)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--target-sha", required=True)
@@ -1301,12 +1329,20 @@ def main() -> int:
     parser.add_argument("--snapshots", type=Path)
     parser.add_argument("--repo-root", type=Path)
     parser.add_argument("--parent-root", type=Path)
+    parser.add_argument("--render-cache", type=Path)
+    parser.add_argument("--render-cache-output", type=Path)
     parser.add_argument("--fixture-input", type=Path)
     parser.add_argument("--preflight-fixture", type=Path)
     args = parser.parse_args()
     try:
         if args.preflight_fixture:
             result = run_preflight_fixture(args.preflight_fixture)
+        elif args.render_cache_output:
+            if not args.repo_root or not args.parent_root:
+                raise Invalid("missing-input")
+            cache = render_cache(args.target_sha, args.parent_sha, args.repo_root, args.parent_root)
+            write_private_json(args.render_cache_output, cache)
+            result = {"render_cache_created": True, "render_error": cache.get("render_error")}
         elif args.fixture_input:
             fixture = json.loads(args.fixture_input.read_text())
             result = attest(
@@ -1319,13 +1355,32 @@ def main() -> int:
                 fixture.get("parent_owner_errors", {}),
             )
         else:
-            if not args.snapshots or not args.repo_root or not args.parent_root:
+            if not args.snapshots or (not args.render_cache and (not args.repo_root or not args.parent_root)):
                 raise Invalid("missing-input")
             snapshot = json.loads(args.snapshots.read_text())
-            target, target_errors = render(args.repo_root.resolve())
-            parent, parent_errors = render(args.parent_root.resolve())
+            if args.render_cache:
+                cache = json.loads(args.render_cache.read_text())
+                if (cache.get("schema_version") != 1
+                        or cache.get("target_sha") != args.target_sha
+                        or cache.get("parent_sha") != args.parent_sha):
+                    raise Invalid("render-cache-invalid")
+                if cache.get("render_error"):
+                    result = root_failure(snapshot, args.target_sha, args.parent_sha)
+                    print(json.dumps(result, sort_keys=True, separators=(",", ":")))
+                    return 0
+                target = cache["target_render"]
+                target_errors = cache.get("owner_errors") or {}
+                parent = cache["parent_render"]
+                parent_errors = cache.get("parent_owner_errors") or {}
+            else:
+                target, target_errors = render(args.repo_root.resolve())
+                parent, parent_errors = render(args.parent_root.resolve())
             result = attest(target, parent, snapshot, args.target_sha, args.parent_sha, target_errors, parent_errors)
     except Invalid as exc:
+        if args.render_cache_output:
+            print(json.dumps({"render_cache_created": False, "error": exc.code},
+                             sort_keys=True, separators=(",", ":")))
+            return 2
         if exc.code in {"root-render-unsupported", "render-tool-version-mismatch", "render-tool-unavailable", "render-unsupported"}:
             result = root_failure(snapshot if isinstance(locals().get("snapshot"), dict) else {}, args.target_sha, args.parent_sha)
         else:

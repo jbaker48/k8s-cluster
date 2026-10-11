@@ -2,6 +2,8 @@
   "expected": {
     "all_ready": false,
     "diagnostic_codes": [
+      "helm-attempt-not-settled",
+      "kustomization-owner-inventory-invalid",
       "superseded"
     ],
     "sample_valid": false,
@@ -11,8 +13,6 @@
   "poll_expected": {
     "all_ready": false,
     "command_trace": [
-      "git-rev-parse",
-      "git-worktree-add",
       "clock:100",
       "clock:100",
       "gh-main-target",

@@ -1,6 +1,6 @@
 ---
 # yamllint disable rule:line-length
-# yaml-language-server: $schema=https://kubernetes-schemas.pages.dev/rbac.authorization.k8s.io/clusterrole_v1.json
+# yaml-language-server: $schema=https://kubernetes-schemas.pages.dev/core_v1_serviceaccount.json
 # yamllint enable rule:line-length
 apiVersion: v1
 kind: ServiceAccount
@@ -8,6 +8,9 @@ metadata:
   name: health-gate
   namespace: arc-runners
 ---
+# yamllint disable rule:line-length
+# yaml-language-server: $schema=https://kubernetes-schemas.pages.dev/rbac.authorization.k8s.io/clusterrole_v1.json
+# yamllint enable rule:line-length
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:

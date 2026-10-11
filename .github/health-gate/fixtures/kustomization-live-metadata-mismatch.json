@@ -3,13 +3,23 @@
   "base_fixture": "terminal-target-attempt-no-baseline",
   "producer_mutations": [
     {
-      "path": ["snapshot", "after", "kustomizations", 2, "metadata", "labels", "kustomize.toolkit.fluxcd.io/name"],
+      "path": [
+        "snapshot",
+        "after",
+        "kustomizations",
+        2,
+        "metadata",
+        "labels",
+        "kustomize.toolkit.fluxcd.io/name"
+      ],
       "value": "cluster"
     }
   ],
   "producer_expected": {
     "candidate_count": 0,
-    "diagnostic_codes": ["kustomization-metadata-mismatch"],
+    "diagnostic_codes": [
+      "kustomization-metadata-mismatch"
+    ],
     "helmreleases_supported": 1,
     "helmreleases_total": 1,
     "helmreleases_unsupported": 0,
@@ -19,7 +29,13 @@
   },
   "expected": {
     "all_ready": false,
-    "diagnostic_codes": ["kustomization-metadata-mismatch"],
+    "diagnostic_codes": [
+      "helm-attempt-not-settled",
+      "kustomization-metadata-mismatch",
+      "kustomization-not-settled-at-target",
+      "kustomization-owner-inventory-invalid",
+      "revision-not-target"
+    ],
     "sample_valid": false,
     "superseded": false
   }

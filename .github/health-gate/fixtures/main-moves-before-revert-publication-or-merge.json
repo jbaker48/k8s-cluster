@@ -2,6 +2,11 @@
   "expected": {
     "all_ready": false,
     "diagnostic_codes": [
+      "helm-attempt-not-settled",
+      "kustomization-metadata-mismatch",
+      "kustomization-not-settled-at-target",
+      "kustomization-owner-inventory-invalid",
+      "revision-not-target",
       "superseded"
     ],
     "sample_valid": false,
@@ -12,8 +17,6 @@
   "poll_expected": {
     "all_ready": false,
     "command_trace": [
-      "git-rev-parse",
-      "git-worktree-add",
       "clock:100",
       "clock:100",
       "gh-main-target",
@@ -66,6 +69,7 @@
   "producer_expected": {
     "candidate_count": 0,
     "diagnostic_codes": [
+      "kustomization-metadata-mismatch",
       "superseded"
     ],
     "helmreleases_supported": 1,

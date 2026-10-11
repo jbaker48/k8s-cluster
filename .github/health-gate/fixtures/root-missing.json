@@ -1,7 +1,11 @@
 {
   "expected": {
     "all_ready": false,
-    "diagnostic_codes": [],
+    "diagnostic_codes": [
+      "helm-attempt-not-settled",
+      "inventory-closure-invalid",
+      "owner-inventory-invalid"
+    ],
     "sample_valid": false,
     "superseded": false
   },

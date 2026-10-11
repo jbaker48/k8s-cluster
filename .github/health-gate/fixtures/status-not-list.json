@@ -2,6 +2,8 @@
   "expected": {
     "all_ready": false,
     "diagnostic_codes": [
+      "helm-attempt-not-settled",
+      "kustomization-owner-inventory-invalid",
       "status-not-list"
     ],
     "sample_valid": false,
@@ -11,8 +13,6 @@
   "poll_expected": {
     "all_ready": false,
     "command_trace": [
-      "git-rev-parse",
-      "git-worktree-add",
       "clock:100",
       "clock:100",
       "gh-main-target",
@@ -28,7 +28,7 @@
       "producer-attest",
       "jq-classifier-pass",
       "sleep",
-      "clock:101",
+      "clock:160",
       "git-diff",
       "git-worktree-remove",
       "clock-utc",
@@ -45,7 +45,7 @@
       "100",
       "100",
       "100",
-      "101"
+      "160"
     ],
     "kubectl": [
       "list",

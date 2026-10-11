@@ -2,6 +2,9 @@
   "expected": {
     "all_ready": false,
     "diagnostic_codes": [
+      "helm-attempt-not-settled",
+      "kustomization-not-settled-at-target",
+      "kustomization-owner-inventory-invalid",
       "revision-not-target"
     ],
     "sample_valid": false,

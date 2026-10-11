@@ -161,6 +161,7 @@ if [ ! -s "$TMP_DIR/classifier.jq" ]; then
 fi
 jq -n -f "$TMP_DIR/classifier.jq" >/dev/null
 extract_step notify-inconclusive "$TMP_DIR/notify-inconclusive.sh"
+extract_step backstop "$TMP_DIR/backstop.sh"
 
 run_local_render_fixture() {
   local fixture=$1
@@ -227,7 +228,7 @@ if [ "${1:-}" = "--shellcheck" ]; then
     printf 'usage: %s [--shellcheck]\n' "${BASH_SOURCE[0]}" >&2
     exit 2
   fi
-  for step_id in bootstrap auth window poll notify-inconclusive revert circuit-breaker revert-pr revert-provenance backstop; do
+  for step_id in bootstrap auth window render poll notify-inconclusive revert circuit-breaker revert-pr revert-provenance backstop; do
     extract_step "$step_id" "$TMP_DIR/$step_id.raw.sh"
     sed -E 's/\$\{\{[^}]*\}\}/fixture/g' "$TMP_DIR/$step_id.raw.sh" > "$TMP_DIR/$step_id.sh"
     shellcheck -s bash "$TMP_DIR/$step_id.sh"
@@ -287,6 +288,7 @@ required=(
   first-poll-failed-recent-timestamp
   rbac-denied
   api-error
+  hung-kubectl-read
   malformed-json
   status-not-list
   jq-error
@@ -297,6 +299,8 @@ required=(
   helmchart-same-version-new-bytes
   main-moves-before-revert-publication-or-merge
   cas-unavailable-with-otherwise-complete-evidence
+  changed-helmrelease-target-namespace-only
+  changed-oci-source-timeout-only
   remote-build-dependency-owner
   render-preflight
   newest-history-failed
@@ -402,11 +406,10 @@ for fixture in "$FIXTURE_DIR"/*.json; do
       .counts.helmreleases_total == $expected.helmreleases_total
       and .counts.helmreleases_supported == $expected.helmreleases_supported
       and .counts.helmreleases_unsupported == $expected.helmreleases_unsupported
-      and (.counts.reason_codes as $actual_reasons
-           | all(($expected.reason_codes // {}) | to_entries[];
-                 . as $entry | $actual_reasons[$entry.key] == $entry.value))
-      and ([.diagnostics[]?.code] as $codes
-           | all($expected.diagnostic_codes[]?; . as $code | $codes | index($code) != null))
+      and ((.counts.reason_codes // {} | to_entries | sort_by(.key))
+           == (($expected.reason_codes // {}) | to_entries | sort_by(.key)))
+      and (([.diagnostics[]?.code] | unique | sort)
+           == (($expected.diagnostic_codes // []) | unique | sort))
       and ([.legacy_chart_diagnostics[]?] as $legacy
            | all(($expected.legacy_chart_diagnostics // [])[];
                  . as $wanted
@@ -416,8 +419,12 @@ for fixture in "$FIXTURE_DIR"/*.json; do
                        and .helm_chart.reference_match == $wanted.reference_match
                        and .helm_chart.status_reference_match == $wanted.status_reference_match
                        and .artifact_binding == $wanted.artifact_binding
-                       and ((.reason_codes | sort) == ($wanted.reason_codes | sort)))))
+                       and ((.reason_codes | unique | sort)
+                            == ($wanted.reason_codes | unique | sort)))))
       and ([.candidate_failures[]?] | length) == ($expected.candidate_count // 0)
+      and (($expected.changed_inputs != true)
+           or all(.candidate_failures[]?;
+                  .checks.target_changed_effective_inputs == true))
       and all(.candidate_failures[]?; .authorized == false)
       and all(.candidate_failures[]?; .checks.healthy_premerge_baseline_same_hr_uid == false)
       and all(.candidate_failures[]?; .checks.server_enforced_base_sha_merge_cas == false)
@@ -434,8 +441,8 @@ for fixture in "$FIXTURE_DIR"/*.json; do
     and $actual.sample_valid == $expected.sample_valid
     and $actual.superseded == $expected.superseded
     and ($actual.stalled_or_failed == [])
-    and ([$actual.diagnostics[]?.code] as $codes
-         | all($expected.diagnostic_codes[]?; . as $code | $codes | index($code) != null))
+    and (([$actual.diagnostics[]?.code] | unique | sort)
+         == (($expected.diagnostic_codes // []) | unique | sort))
   ' >/dev/null || {
     printf 'classifier fixture failed: %s actual=%s expected=%s\n' \
       "$name" \
@@ -454,6 +461,7 @@ printf 'passed %s health-gate fixtures\n' "$passed"
 
 REAL_PYTHON3=$(command -v python3)
 REAL_JQ=$(command -v jq)
+REAL_SLEEP=$(command -v sleep)
 STUB_DIR="$TMP_DIR/stubs"
 mkdir -p "$STUB_DIR"
 cat > "$STUB_DIR/fixture-tool" <<'TOOL'
@@ -503,6 +511,10 @@ case "$tool" in
       response=$(next_response "$POLL_KUBECTL_RESPONSES" kubectl-count)
       case "$response" in
         error) trace "kubectl-get-error:$resource"; exit 1 ;;
+        hang)
+          trace "kubectl-get-hang:$resource"
+          exec "$REAL_SLEEP" 30
+          ;;
         malformed) trace "kubectl-get-malformed:$resource"; printf '{invalid-json'; exit 0 ;;
         list) trace "kubectl-get:$resource"; printf '{"apiVersion":"v1","kind":"List","items":[]}\n'; exit 0 ;;
         *) trace "kubectl-get-invalid-response:$resource"; exit 97 ;;
@@ -587,6 +599,7 @@ for tool in gh kubectl git date sleep python3 jq; do
 done
 
 poll_cases=0
+backstop_fixture_dir=
 for fixture in "$FIXTURE_DIR"/*.json; do
   [ -f "$fixture" ] || continue
   scenario=$(jq -r '.poll_scenario // empty' "$fixture")
@@ -595,6 +608,9 @@ for fixture in "$FIXTURE_DIR"/*.json; do
   poll_cases=$((poll_cases + 1))
   poll_dir="$TMP_DIR/poll-$name"
   mkdir -p "$poll_dir/state" "$poll_dir/runner"
+  if [ "$(jq -r '.backstop_scenario // empty' "$fixture")" != "" ]; then
+    backstop_fixture_dir="$poll_dir"
+  fi
   poll_proof="$poll_dir/proof.json"
   if jq -e 'has("producer_input")' "$fixture" >/dev/null; then
     jq -c '.producer_input' "$fixture" > "$poll_dir/producer-input.json"
@@ -608,7 +624,7 @@ for fixture in "$FIXTURE_DIR"/*.json; do
   fi
   target_sha=$(jq -r '.target_sha // .proof.target_sha' "$fixture")
   parent_sha=$(jq -r '.parent_sha // .proof.parent_sha' "$fixture")
-  export REAL_PYTHON3 REAL_JQ POLL_SCENARIO="$scenario" POLL_TRACE="$poll_dir/trace"
+  export REAL_PYTHON3 REAL_JQ REAL_SLEEP POLL_SCENARIO="$scenario" POLL_TRACE="$poll_dir/trace"
   export POLL_STATE="$poll_dir/state" POLL_EVENT="$poll_dir/event.yaml" POLL_PROOF="$poll_proof"
   jq -r '.poll_responses.main[]' "$fixture" > "$poll_dir/main.responses"
   jq -r '.poll_responses.kubectl[]' "$fixture" > "$poll_dir/kubectl.responses"
@@ -620,7 +636,15 @@ for fixture in "$FIXTURE_DIR"/*.json; do
   export POLL_CLOCK_RESPONSES="$poll_dir/clock.responses"
   export POLL_PARENT_SHA="$parent_sha" GITHUB_SHA="$target_sha" GITHUB_REPOSITORY=fixture/repo
   export GITHUB_WORKSPACE="$ROOT" GITHUB_RUN_ID=fixture-run RUNNER_TEMP="$poll_dir/runner"
-  export WINDOW_SECONDS=1 GITHUB_OUTPUT="$poll_dir/output" GITHUB_STEP_SUMMARY="$poll_dir/summary"
+  export HEALTH_GATE_PARENT_SHA="$parent_sha"
+  export HEALTH_GATE_PARENT_ROOT="$poll_dir/runner/parent"
+  export HEALTH_GATE_RENDER_CACHE="$poll_dir/runner/render-cache.json"
+  export HEALTH_GATE_RENDER_STATUS=ready HEALTH_GATE_JOB_STARTED_AT=100
+  mkdir -p "$HEALTH_GATE_PARENT_ROOT"
+  printf '{}' > "$HEALTH_GATE_RENDER_CACHE"
+  export WINDOW_SECONDS
+  WINDOW_SECONDS=$(jq -r '.poll_window_seconds // 60' "$fixture")
+  export GITHUB_OUTPUT="$poll_dir/output" GITHUB_STEP_SUMMARY="$poll_dir/summary"
   : > "$POLL_TRACE"
   if ! PATH="$STUB_DIR:$PATH" bash -euo pipefail "$TMP_DIR/poll.sh" > "$poll_dir/stdout" 2> "$poll_dir/stderr"; then
     printf 'poll shell fixture failed: %s\n' "$name" >&2
@@ -644,13 +668,15 @@ for fixture in "$FIXTURE_DIR"/*.json; do
     exit 1
   fi
   result=$(awk '/^diagnostics<<HEALTHGATEEOF$/ { inside=1; next } inside && /^HEALTHGATEEOF$/ { exit } inside { print }' "$GITHUB_OUTPUT")
-  if ! printf '%s' "$result" | jq -e --argjson expected "$(jq -c '.expected' "$fixture")" '
+  if ! printf '%s' "$result" | jq -e \
+    --argjson expected "$(jq -c '.expected' "$fixture")" \
+    --argjson poll_codes "$(jq -c '.poll_expected.diagnostic_codes // .expected.diagnostic_codes // []' "$fixture")" '
     .all_ready == $expected.all_ready
     and .sample_valid == $expected.sample_valid
     and .superseded == $expected.superseded
     and (.stalled_or_failed == [])
-    and ([.diagnostics[]?.code] as $codes
-         | all($expected.diagnostic_codes[]?; . as $code | $codes | index($code) != null))
+    and (([.diagnostics[]?.code] | unique | sort)
+         == ($poll_codes | unique | sort))
   ' >/dev/null; then
     printf 'poll classifier result mismatch: %s actual=%s expected=%s\n' \
       "$name" \
@@ -676,7 +702,7 @@ for fixture in "$FIXTURE_DIR"/*.json; do
         printf 'inconclusive Event omitted expected reason %s: %s\n' "$code" "$name" >&2
         exit 1
       }
-    done < <(jq -r '.expected.diagnostic_codes[]?' "$fixture")
+    done < <(jq -r '(.poll_expected.diagnostic_codes // .expected.diagnostic_codes // [])[]?' "$fixture")
   fi
   trace_json=$("$REAL_PYTHON3" - "$POLL_TRACE" <<'PYTHON'
 import json
@@ -727,5 +753,42 @@ done
 if [ "$poll_cases" -eq 0 ]; then
   printf 'zero extracted poll shell scenarios were executed\n' >&2
   exit 2
+fi
+if [ -z "$backstop_fixture_dir" ]; then
+  printf 'no extracted post-auth failure backstop fixture was executed\n' >&2
+  exit 2
+fi
+if [ "$(jq -r '.backstop_scenario' "$FIXTURE_DIR/api-error.json")" \
+  != "failure-after-auth-before-inconclusive-notification" ]; then
+  printf 'backstop fixture scenario is not the required post-auth failure\n' >&2
+  exit 2
+fi
+POLL_TRACE="$backstop_fixture_dir/backstop.trace"
+POLL_EVENT="$backstop_fixture_dir/backstop-event.yaml"
+GITHUB_STEP_SUMMARY="$backstop_fixture_dir/backstop-summary"
+KUBECONFIG="$RUNNER_TEMP/health-gate-kubeconfig.yaml"
+export POLL_TRACE POLL_EVENT GITHUB_STEP_SUMMARY KUBECONFIG
+: > "$POLL_TRACE"
+: > "$POLL_EVENT"
+if ! PATH="$STUB_DIR:$PATH" POLL_OUTCOME=none \
+  bash -euo pipefail "$TMP_DIR/backstop.sh" \
+  > "$backstop_fixture_dir/backstop.stdout" \
+  2> "$backstop_fixture_dir/backstop.stderr"; then
+  printf 'extracted post-auth backstop fixture failed\n' >&2
+  cat "$backstop_fixture_dir/backstop.stderr" >&2
+  exit 1
+fi
+if ! grep -Fq '::error title=Health gate did not reach a verdict::' \
+  "$backstop_fixture_dir/backstop.stdout" \
+  || ! grep -Fq 'reason: HealthGateInconclusive' "$POLL_EVENT" \
+  || ! grep -Fq 'name: health-gate-inconclusive-backstop-fixture-run' "$POLL_EVENT" \
+  || ! grep -Fq 'name: cluster-apps' "$POLL_EVENT" \
+  || ! grep -Fq 'namespace: flux-system' "$POLL_EVENT"; then
+  printf 'post-auth backstop did not emit its annotation and HealthGateInconclusive Event\n' >&2
+  exit 1
+fi
+if ! grep -Fxq 'kubectl-create-event' "$POLL_TRACE"; then
+  printf 'post-auth backstop did not attempt Kubernetes Event creation\n' >&2
+  exit 1
 fi
 printf 'passed %s extracted workflow poll shell scenarios with command stubs\n' "$poll_cases"

@@ -1,0 +1,26 @@
+{
+  "expected": {
+    "all_ready": false,
+    "diagnostic_codes": [],
+    "sample_valid": false,
+    "superseded": false
+  },
+  "name": "empty",
+  "proof": {
+    "diagnostics": [],
+    "helm_releases": [],
+    "kustomizations": [],
+    "observed": {
+      "gitrepositories": [],
+      "helmcharts": [],
+      "helmreleases": [],
+      "helmrepositories": [],
+      "kustomizations": [],
+      "ocirepositories": []
+    },
+    "parent_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "sample_valid": true,
+    "superseded": false,
+    "target_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  }
+}

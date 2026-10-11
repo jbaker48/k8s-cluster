@@ -1,0 +1,219 @@
+{
+  "expected": {
+    "all_ready": false,
+    "diagnostic_codes": [
+      "remote-build-dependency"
+    ],
+    "sample_valid": false,
+    "superseded": false
+  },
+  "name": "remote-build-dependency-owner",
+  "parent_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "producer_expected": {
+    "candidate_count": 0,
+    "diagnostic_codes": [
+      "remote-build-dependency"
+    ],
+    "helmreleases_supported": 0,
+    "helmreleases_total": 1,
+    "helmreleases_unsupported": 1,
+    "reason_codes": {
+      "remote-build-dependency": 1
+    }
+  },
+  "producer_input": {
+    "owner_errors": {
+      "flux-system/dragonfly": "remote-build-dependency"
+    },
+    "parent_render": [],
+    "snapshot": {
+      "after": {
+        "gitrepositories": [
+          {
+            "apiVersion": "source.toolkit.fluxcd.io/v1",
+            "kind": "GitRepository",
+            "metadata": {
+              "annotations": {},
+              "generation": 1,
+              "labels": {},
+              "name": "home-kubernetes",
+              "namespace": "flux-system",
+              "resourceVersion": "rv-git",
+              "uid": "uid-git"
+            },
+            "spec": {
+              "ref": {
+                "branch": "main"
+              },
+              "url": "https://example.invalid/repo"
+            },
+            "status": {
+              "artifact": {
+                "revision": "main@sha1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              },
+              "conditions": [
+                {
+                  "observedGeneration": 1,
+                  "status": "True",
+                  "type": "Ready"
+                }
+              ],
+              "observedGeneration": 1
+            }
+          }
+        ],
+        "helmcharts": [],
+        "helmreleases": [
+          {
+            "apiVersion": "helm.toolkit.fluxcd.io/v2",
+            "kind": "HelmRelease",
+            "metadata": {
+              "annotations": {},
+              "generation": 1,
+              "labels": {
+                "kustomize.toolkit.fluxcd.io/name": "dragonfly",
+                "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+              },
+              "name": "demo",
+              "namespace": "apps",
+              "resourceVersion": "rv-hr-demo",
+              "uid": "uid-hr-demo"
+            },
+            "spec": {
+              "chartRef": {
+                "kind": "OCIRepository",
+                "name": "chart",
+                "namespace": "flux-system"
+              },
+              "interval": "5m",
+              "values": {
+                "replicas": 2
+              }
+            },
+            "status": {
+              "conditions": [
+                {
+                  "observedGeneration": 1,
+                  "status": "True",
+                  "type": "Ready"
+                }
+              ],
+              "history": [
+                {
+                  "chartVersion": "1.2.3",
+                  "configDigest": "cfg-current",
+                  "status": "deployed",
+                  "version": 4
+                }
+              ],
+              "lastAttemptedConfigDigest": "cfg-current",
+              "lastAttemptedGeneration": 1,
+              "lastAttemptedRevision": "1.2.3+dddddddddddd",
+              "lastAttemptedRevisionDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+              "observedGeneration": 1
+            }
+          }
+        ],
+        "helmrepositories": [],
+        "kustomizations": [],
+        "ocirepositories": []
+      },
+      "before": {
+        "gitrepositories": [
+          {
+            "apiVersion": "source.toolkit.fluxcd.io/v1",
+            "kind": "GitRepository",
+            "metadata": {
+              "annotations": {},
+              "generation": 1,
+              "labels": {},
+              "name": "home-kubernetes",
+              "namespace": "flux-system",
+              "resourceVersion": "rv-git",
+              "uid": "uid-git"
+            },
+            "spec": {
+              "ref": {
+                "branch": "main"
+              },
+              "url": "https://example.invalid/repo"
+            },
+            "status": {
+              "artifact": {
+                "revision": "main@sha1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              },
+              "conditions": [
+                {
+                  "observedGeneration": 1,
+                  "status": "True",
+                  "type": "Ready"
+                }
+              ],
+              "observedGeneration": 1
+            }
+          }
+        ],
+        "helmcharts": [],
+        "helmreleases": [
+          {
+            "apiVersion": "helm.toolkit.fluxcd.io/v2",
+            "kind": "HelmRelease",
+            "metadata": {
+              "annotations": {},
+              "generation": 1,
+              "labels": {
+                "kustomize.toolkit.fluxcd.io/name": "dragonfly",
+                "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+              },
+              "name": "demo",
+              "namespace": "apps",
+              "resourceVersion": "rv-hr-demo",
+              "uid": "uid-hr-demo"
+            },
+            "spec": {
+              "chartRef": {
+                "kind": "OCIRepository",
+                "name": "chart",
+                "namespace": "flux-system"
+              },
+              "interval": "5m",
+              "values": {
+                "replicas": 2
+              }
+            },
+            "status": {
+              "conditions": [
+                {
+                  "observedGeneration": 1,
+                  "status": "True",
+                  "type": "Ready"
+                }
+              ],
+              "history": [
+                {
+                  "chartVersion": "1.2.3",
+                  "configDigest": "cfg-current",
+                  "status": "deployed",
+                  "version": 4
+                }
+              ],
+              "lastAttemptedConfigDigest": "cfg-current",
+              "lastAttemptedGeneration": 1,
+              "lastAttemptedRevision": "1.2.3+dddddddddddd",
+              "lastAttemptedRevisionDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+              "observedGeneration": 1
+            }
+          }
+        ],
+        "helmrepositories": [],
+        "kustomizations": [],
+        "ocirepositories": []
+      },
+      "main_after": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "main_before": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "superseded": false
+    },
+    "target_render": []
+  },
+  "target_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+}

@@ -1,0 +1,12 @@
+{
+  "expected": {
+    "all_ready": false,
+    "diagnostic_codes": [
+      "remote-build-dependency"
+    ],
+    "sample_valid": false,
+    "superseded": false
+  },
+  "local_render_fixture": true,
+  "name": "local-flux-render"
+}

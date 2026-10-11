@@ -2,746 +2,483 @@
 # yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
 name: "Health Gate"
 
-# Deliberately NO paths: filter on the push trigger — every merge to main
-# must trigger a full cluster-wide poll, regardless of which files it
-# touched (HEALTH-01's "across the cluster" scope, not "the merged app
-# only"). workflow_dispatch's window_override_seconds input lets later
-# plans deterministically test the inconclusive path without needing a
-# genuinely slow real app.
 on:
   push:
     branches: ["main"]
   workflow_dispatch:
     inputs:
       window_override_seconds:
-        description: "override the 900s default observation window, seconds — testing only"
+        description: "override the default 900 second observation window"
         required: false
         default: ""
 
 concurrency:
-  # One health-gate run per merge commit — a re-dispatch against the same
-  # SHA cancels the stale one, never runs two polls against the same
-  # commit concurrently.
-  group: ${{ github.workflow }}-${{ github.sha }}
-  cancel-in-progress: true
+  group: health-gate-main
+  cancel-in-progress: false
 
 jobs:
   health-gate:
     name: Health Gate
-    # Grants access to secrets.HEALTH_GATE_KUBECONFIG (Plan 05-01). Plan
-    # 05-06 extends this same job with revert logic but deliberately keeps
-    # this ambient default-token permission block unchanged at
-    # contents: read — every git push / PR create/merge that plan adds
-    # authenticates via a separately-exchanged revert-bot App token, never
-    # the ambient GITHUB_TOKEN, so do not add write scopes here now or
-    # later.
     environment: health-gate
     runs-on: k8s-cluster-ci
     timeout-minutes: 25
     permissions:
       contents: read
     steps:
-      - name: Bootstrap gh CLI and kubectl
+      - name: Checkout target commit
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Bootstrap pinned read-only tools
+        id: bootstrap
         run: |
           set -euo pipefail
           GH_VERSION="2.97.0"
           GH_SHA256="a2c9b8497e1f85b1ad0dfcb78b5a622e098801b8e461e459e88e1ee12f018112"
-          curl -fsSL -o /tmp/gh.tar.gz \
-            "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.tar.gz"
-          echo "${GH_SHA256}  /tmp/gh.tar.gz" | sha256sum -c -
+          curl -fsSL -o /tmp/gh.tar.gz "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.tar.gz"
+          echo "$GH_SHA256  /tmp/gh.tar.gz" | sha256sum -c -
           tar -xzf /tmp/gh.tar.gz -C /tmp
-          sudo install -m 755 "/tmp/gh_${GH_VERSION}_linux_amd64/bin/gh" /usr/local/bin/gh
-          gh --version
+          sudo install -m 755 "/tmp/gh_${GH_VERSION}/bin/gh" /usr/local/bin/gh
 
           KUBECTL_VERSION="$(curl -fsSL https://dl.k8s.io/release/stable-1.35.txt)"
-          curl -fsSL -o /tmp/kubectl \
-            "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
-          curl -fsSL -o /tmp/kubectl.sha256 \
-            "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl.sha256"
+          curl -fsSL -o /tmp/kubectl "https://dl.k8s.io/release/$KUBECTL_VERSION/bin/linux/amd64/kubectl"
+          curl -fsSL -o /tmp/kubectl.sha256 "https://dl.k8s.io/release/$KUBECTL_VERSION/bin/linux/amd64/kubectl.sha256"
           echo "$(cat /tmp/kubectl.sha256)  /tmp/kubectl" | sha256sum -c -
           sudo install -m 755 /tmp/kubectl /usr/local/bin/kubectl
+
+          FLUX_VERSION="2.8.5"
+          FLUX_SHA256="63c178ba938a5443265b2ce02691c005acf4ef6188d4dbb9b9d87333558948c4"
+          curl -fsSL -o /tmp/flux.tar.gz "https://github.com/fluxcd/flux2/releases/download/v${FLUX_VERSION}/flux_${FLUX_VERSION}_linux_amd64.tar.gz"
+          echo "$FLUX_SHA256  /tmp/flux.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/flux.tar.gz -C /tmp flux
+          sudo install -m 755 /tmp/flux /usr/local/bin/flux
+
+          KUSTOMIZE_VERSION="v5.8.1"
+          KUSTOMIZE_SHA256="029a7f0f4e1932c52a0476cf02a0fd855c0bb85694b82c338fc648dcb53a819d"
+          curl -fsSL -o /tmp/kustomize.tar.gz "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize/${KUSTOMIZE_VERSION}/kustomize_${KUSTOMIZE_VERSION}_linux_amd64.tar.gz"
+          echo "$KUSTOMIZE_SHA256  /tmp/kustomize.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/kustomize.tar.gz -C /tmp kustomize
+          sudo install -m 755 /tmp/kustomize /usr/local/bin/kustomize
+
+          YQ_VERSION="v4.52.5"
+          YQ_SHA256="75d893a0d5940d1019cb7cdc60001d9e876623852c31cfc6267047bc31149fa9"
+          curl -fsSL -o /tmp/yq "https://github.com/mikefarah/yq/releases/download/$YQ_VERSION/yq_linux_amd64"
+          echo "$YQ_SHA256  /tmp/yq" | sha256sum -c -
+          sudo install -m 755 /tmp/yq /usr/local/bin/yq
+
+          gh --version
           kubectl version --client
+          flux --version
+          kustomize version
+          yq --version
 
       - name: Authenticate to Kubernetes API
+        id: auth
         run: |
           set -euo pipefail
-          # secrets.HEALTH_GATE_KUBECONFIG is referenced only via the
-          # secrets context here (GitHub auto-masks it in logs); it is
-          # written straight to a runner-local temp file and never
-          # assigned to an env var that could be echoed or captured
-          # elsewhere in this job.
-          KCFG="${RUNNER_TEMP}/health-gate-kubeconfig.yaml"
-          printf '%s' "${{ secrets.HEALTH_GATE_KUBECONFIG }}" > "${KCFG}"
-          chmod 600 "${KCFG}"
-          printf 'KUBECONFIG=%s\n' "${KCFG}" >> "$GITHUB_ENV"
+          KCFG="$RUNNER_TEMP/health-gate-kubeconfig.yaml"
+          printf '%s' "${{ secrets.HEALTH_GATE_KUBECONFIG }}" > "$KCFG"
+          chmod 600 "$KCFG"
+          printf 'KUBECONFIG=%s\n' "$KCFG" >> "$GITHUB_ENV"
 
       - name: Resolve observation window
+        id: window
         env:
           EVENT_NAME: ${{ github.event_name }}
           WINDOW_OVERRIDE: ${{ inputs.window_override_seconds }}
         run: |
           set -euo pipefail
-          if [ "${EVENT_NAME}" = "workflow_dispatch" ] && [ -n "${WINDOW_OVERRIDE}" ]; then
-            WINDOW_SECONDS="${WINDOW_OVERRIDE}"
+          if [ "$EVENT_NAME" = "workflow_dispatch" ] && [ -n "$WINDOW_OVERRIDE" ]; then
+            WINDOW_SECONDS="$WINDOW_OVERRIDE"
           else
             WINDOW_SECONDS=900
           fi
-          echo "WINDOW_SECONDS=${WINDOW_SECONDS}" >> "$GITHUB_ENV"
-          echo "POLL_INTERVAL_SECONDS=30" >> "$GITHUB_ENV"
+          case "$WINDOW_SECONDS" in
+            ''|*[!0-9]*) echo "window must be an integer number of seconds" >&2; exit 2 ;;
+          esac
+          if [ "$WINDOW_SECONDS" -lt 1 ] || [ "$WINDOW_SECONDS" -gt 3600 ]; then
+            echo "window must be between 1 and 3600 seconds" >&2
+            exit 2
+          fi
+          echo "WINDOW_SECONDS=$WINDOW_SECONDS" >> "$GITHUB_ENV"
 
       - name: Poll Flux conditions and classify
         id: poll
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          # Omitting -e here does NOT disable it. GitHub invokes every run:
-          # step as `bash -e {0}`, so -e is active regardless of what this
-          # line says — the same fact this file already records at the
-          # "git revert, or abort" step below. That is what made the retry
-          # guard in this loop dead code: a bare `RAW_OUTPUT=$(kubectl ...)`
-          # followed by `KCTL_STATUS=$?` exits the shell on the FIRST line,
-          # so neither the status capture nor the WARNING/sleep/continue
-          # below it ever ran. Found live on run 31778908203 (gap G-05-2):
-          # the step died at 240s of a 900s window having emitted zero
-          # stdout and no outcome= at all, which skipped the inconclusive
-          # notification and the entire revert path — the gate silently did
-          # nothing. Fail-SILENT, not fail-closed.
-          #
-          # What now makes the fall-through reachable is testing every
-          # fallible command as the direct condition of `if`/`elif`, which
-          # is exempt from -e's early-exit — the same shape commit 3f26bb5f
-          # used for git revert. -e is deliberately left in force so that a
-          # fallible command NOT wrapped this way still fails loudly rather
-          # than being silently skipped.
-          set -uo pipefail
+          set -euo pipefail
+          umask 077
+          JQ_CLASSIFY=$(cat <<'JQ_CLASSIFY_EOF'
+          def conditions($r; $type): [($r.status.conditions // [])[] | select(.type == $type)];
+          def conditions_valid($r):
+            ($r.status.conditions // []) as $c
+            | (($c | type) == "array")
+              and ([$c[].type] | length == (unique | length))
+              and ([$c[] | select((.type | type) != "string" or (.type | length) == 0)] | length == 0);
+          def ready($r):
+            (conditions($r; "Ready")) as $c
+            | (($c | length) == 1)
+              and conditions_valid($r)
+              and ($r.metadata.generation | type == "number" and . >= 1)
+              and $r.metadata.deletionTimestamp == null
+              and $r.suspended != true
+              and $c[0].status == "True"
+              and $c[0].observedGeneration == $r.metadata.generation
+              and $r.status.observedGeneration == $r.metadata.generation
+              and ((conditions($r; "Reconciling") | map(select(.status == "True")) | length) == 0)
+              and ((conditions($r; "Stalled") | map(select(.status == "True")) | length) == 0);
+          def target_revision($r; $t):
+            $r.status.lastAttemptedRevision == ("main@sha1:" + $t)
+            and $r.status.lastAppliedRevision == ("main@sha1:" + $t);
+          def owner_ref($r):
+            (($r.metadata.labels["kustomize.toolkit.fluxcd.io/namespace"] // "flux-system") + "/" +
+             ($r.metadata.labels["kustomize.toolkit.fluxcd.io/name"] // ""));
+          def owner_identity($r):
+            (($r.metadata.namespace // "default") + "/" + ($r.metadata.name // ""));
+          def has_inventory($owner; $hr):
+            (($owner.status.inventory_ids // []) | index(
+              (($hr.metadata.namespace // "default") + "_" + $hr.metadata.name +
+               "_helm.toolkit.fluxcd.io_HelmRelease")
+            )) != null;
+          def latest_deployed($r):
+            [($r.status.history // [])[] | select(.status == "deployed")]
+            | sort_by(.version // 0) | last;
+          def candidate_owner_exception($p; $ks; $target; $parent):
+            ($ks.status.lastAppliedRevision == ("main@sha1:" + $parent))
+            and $ks.status.lastAttemptedRevision == ("main@sha1:" + $target)
+            and ([ $p.candidate_failures[]?
+              | select(.authorized == false
+                       and .checks.complete_stable_sample == true
+                       and .checks.not_superseded == true
+                       and .checks.target_changed_effective_inputs == true
+                       and .checks.healthy_premerge_baseline_same_hr_uid == false
+                       and .checks.live_desired_spec_and_source_match == true
+                       and .checks.unique_current_owner_inventory == true
+                       and .checks.attempted_generation_and_chart_identity_match == true
+                       and .checks.current_terminal_retry_exhaustion == true
+                       and .checks.no_competing_failure == true
+                       and .checks.server_enforced_base_sha_merge_cas == false)
+              | select(.owner.namespace == $ks.metadata.namespace
+                       and .owner.name == $ks.metadata.name) ] | length) > 0;
+          . as $p
+          | ($p.target_sha // "") as $t
+          | ($p.observed.kustomizations // []) as $allks
+          | ($allks | map(select(.suspended != true))) as $activeks
+          | ($p.observed.helmreleases // []) as $allhrs
+          | ($allhrs | map(select(.suspended != true))) as $activehrs
+          | ($p.observed.gitrepositories // []
+             | map(select(.metadata.namespace == "flux-system" and .metadata.name == "home-kubernetes"))
+             | .[0] // null) as $git
+          | ([ $allks[] | select(.metadata.namespace == "flux-system" and
+                                (.metadata.name == "cluster" or .metadata.name == "cluster-apps")) ]) as $roots
+          | ([ $p.kustomizations[]? | select(.supported != true) ]) as $unsupportedks
+          | ([ $p.helm_releases[]? | select(.supported != true) ]) as $unsupportedhrs
+          | ([ $activehrs[] as $hr
+               | ($p.helm_releases | map(select(.namespace == $hr.metadata.namespace and .name == $hr.metadata.name)) | .[0] // null) as $proof
+               | select($proof == null or $proof.supported != true) ]) as $badhrs
+          | ([ $activehrs[] as $hr
+               | ($allks | map(select(owner_identity(.) == owner_ref($hr)))) as $owners
+               | ($owners | .[0] // null) as $owner
+               | ($allks | map(select(has_inventory(.; $hr))) | length) as $inventory_owners
+               | select(($owners | length) != 1 or $inventory_owners != 1
+                       or $owner.suspended == true or (has_inventory($owner; $hr) | not)) ]) as $badowners
+          | ([ $p.helm_releases[]? as $proof
+               | select([$allhrs[] | select(.metadata.namespace == $proof.namespace and
+                                            .metadata.name == $proof.name)] | length == 0) ]) as $missinghrs
+          | ([ $p.kustomizations[]? as $proof
+               | select([$allks[] | select(.metadata.namespace == $proof.namespace and
+                                            .metadata.name == $proof.name)] | length == 0) ]) as $missingks
+          | ([ $activehrs[] as $hr
+               | ($p.helm_releases | map(select(.namespace == $hr.metadata.namespace and .name == $hr.metadata.name)) | .[0] // null) as $proof
+               | select($proof != null and $proof.supported == true)
+               | ($p.observed.ocirepositories
+                  | map(select(.metadata.namespace == $proof.source_namespace and .metadata.name == $proof.source_name))
+                  | .[0] // null) as $source
+               | ($hr.status.lastAttemptedConfigDigest // "") as $attempt
+               | (latest_deployed($hr)) as $deployed
+               | select($hr.metadata.generation != $hr.status.lastAttemptedGeneration
+                        or $hr.metadata.generation != $hr.status.observedGeneration
+                        or $hr.status.lastAttemptedRevision != ($proof.source_tag + "+" + ($proof.source_digest | sub("^sha256:"; "")[0:12]))
+                        or $hr.status.lastAttemptedRevisionDigest != $proof.source_digest
+                        or $source == null
+                        or $source.status.artifact_revision != ($proof.source_tag + "@" + $proof.source_digest)
+                        or (ready($source) | not)
+                        or $deployed == null or $attempt == "" or $deployed.configDigest != $attempt
+                        or (ready($hr) | not)) ]) as $badhrhealth
+          | ([ $activeks[] | select((ready(.) | not) or (target_revision(.; $t) | not)
+                          or .spec.sourceRef.kind != "GitRepository"
+                          or .spec.sourceRef.name != "home-kubernetes"
+                          or ((.spec.sourceRef.namespace // .metadata.namespace) != "flux-system")) ]) as $badkshealth
+          | ([ $activeks[] | select((target_revision(.; $t) | not)
+                          and (candidate_owner_exception($p; .; $t; $p.parent_sha // "") | not)) ]) as $mixed
+          | ([ $activeks[] | select((conditions(.; "Ready") | length) != 1
+                                    or .metadata.generation == null
+                                    or .status.observedGeneration == null) ]) as $malformedks
+          | ([ $activehrs[] | select((conditions(.; "Ready") | length) != 1
+                                     or .metadata.generation == null
+                                     or .status.observedGeneration == null) ]) as $malformedhrs
+          | ([ $allhrs[] as $hr
+               | ($p.helm_releases | map(select(.namespace == $hr.metadata.namespace and .name == $hr.metadata.name)) | length) as $n
+               | select($n != 1) ]) as $setmismatch
+          | ([ $allks[] as $ks
+               | ($p.kustomizations | map(select(.namespace == $ks.metadata.namespace and .name == $ks.metadata.name)) | length) as $n
+               | select($n != 1) ]) as $ksmismatch
+          | ([ $roots[] | select(.suspended == true or (ready(.) | not)
+                                  or .status.lastAttemptedRevision != ("main@sha1:" + $t)
+                                  or .status.lastAppliedRevision != ("main@sha1:" + $t)) ]) as $badroots
+          | ((($p.sample_valid == true)
+              and ($p.superseded != true) and ($t | test("^[0-9a-f]{40}$"))
+              and ($git != null)
+              and (ready($git))
+              and $git.status.artifact_revision == ("main@sha1:" + $t)
+              and ($roots | length) == 2
+              and ($activeks | length) > 0
+              and ($activehrs | length) > 0
+              and ($unsupportedks | length) == 0
+              and ($unsupportedhrs | length) == 0
+              and ($missinghrs | length) == 0
+              and ($missingks | length) == 0
+              and ($badhrs | length) == 0
+              and ($badowners | length) == 0
+              and ($badhrhealth | length) == 0
+              and ($badkshealth | length) == 0
+              and ($badroots | length) == 0
+              and ($malformedks | length) == 0
+              and ($malformedhrs | length) == 0
+              and ($missinghrs | length) == 0
+              and ($missingks | length) == 0
+              and ($setmismatch | length) == 0
+              and ($ksmismatch | length) == 0
+              and ($mixed | length) == 0)) as $allready
+          | ((($p.sample_valid == true)
+              and ($p.superseded != true)
+              and ($git != null)
+              and (ready($git))
+              and $git.status.artifact_revision == ("main@sha1:" + $t)
+              and ($roots | length) == 2
+              and ($malformedks | length) == 0
+              and ($malformedhrs | length) == 0
+              and ($setmismatch | length) == 0
+              and ($ksmismatch | length) == 0
+              and ($badowners | length) == 0
+              and ($mixed | length) == 0
+              and ($badroots | length) == 0)) as $samplevalid
+          | ([ $p.diagnostics[]? | {kind, namespace, name, code, reason} ]) as $diagnostics
+          | ([ $badowners[] | {kind:"HelmRelease", namespace:.metadata.namespace, name:.metadata.name,
+                                code:"owner-inventory-invalid", reason:"owner-inventory-invalid"} ]) as $ownerdiags
+          | ([ $mixed[] | {kind:"Kustomization", namespace:.metadata.namespace, name:.metadata.name,
+                            code:"revision-not-target", reason:"revision-not-target"} ]) as $revisiondiags
+          | ([ $badhrhealth[] | {kind:"HelmRelease", namespace:.metadata.namespace, name:.metadata.name,
+                                  code:"helm-attempt-not-settled", reason:"helm-attempt-not-settled"} ]) as $hrdiags
+          | ([ $badkshealth[] | {kind:"Kustomization", namespace:.metadata.namespace, name:.metadata.name,
+                                  code:"kustomization-not-settled-at-target", reason:"kustomization-not-settled-at-target"} ]) as $ksdiags
+          | ([ $unsupportedhrs[] | {kind:"HelmRelease", namespace, name, code:.reason_code, reason:.reason_code} ]) as $unsupporteddiags
+          | ([ $unsupportedks[] | {kind:"Kustomization", namespace, name, code:.reason_code, reason:.reason_code} ]) as $unsupportedksdiags
+          | ([ $missinghrs[] | {kind:"HelmRelease", namespace, name, code:"desired-helmrelease-not-live", reason:"desired-helmrelease-not-live"} ]) as $missinghrdiags
+          | ([ $missingks[] | {kind:"Kustomization", namespace, name, code:"desired-kustomization-not-live", reason:"desired-kustomization-not-live"} ]) as $missingksdiags
+          | ($diagnostics + $ownerdiags + $revisiondiags + $hrdiags + $ksdiags + $unsupporteddiags + $unsupportedksdiags + $missinghrdiags + $missingksdiags) as $all_diag
+          | {all_ready:$allready, stalled_or_failed:[],
+             diagnostics:($all_diag | unique_by([.kind,.namespace,.name,.code])),
+             sample_valid:$samplevalid, superseded:($p.superseded == true)}
+          JQ_CLASSIFY_EOF
+          )
 
-          DEADLINE_EPOCH=$(( $(date +%s) + WINDOW_SECONDS ))
-          OUTCOME=""
-          LAST_JSON=""
-          RAW_OUTPUT=""
-          STALLED_OR_FAILED_JSON="[]"
-          NOT_READY_JSON="[]"
+          TARGET_SHA="$GITHUB_SHA"
+          if ! printf '%s' "$TARGET_SHA" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "target SHA is not a full lowercase commit SHA" >&2
+            exit 2
+          fi
+          PARENT_SHA=$(git rev-parse "$TARGET_SHA^")
+          PARENT_ROOT="$RUNNER_TEMP/health-gate-parent"
+          git worktree add --detach "$PARENT_ROOT" "$PARENT_SHA" >/dev/null
+          chmod 700 "$PARENT_ROOT"
+          PRIVATE="$RUNNER_TEMP/health-gate-private"
+          install -d -m 700 "$PRIVATE"
+          trap 'git worktree remove --force "$PARENT_ROOT" >/dev/null 2>&1 || true; rm -rf "$PRIVATE"' EXIT
 
-          # Single jq pass over the full .items array per iteration — never
-          # a per-item loop with early exit — so a multi-resource Stalled
-          # tick doesn't depend on jq's item ordering.
-          JQ_CLASSIFY='
-            def readyCond: (.status.conditions // []) | map(select(.type=="Ready")) | (.[0] // null);
-            def stalledCond: (.status.conditions // []) | map(select(.type=="Stalled")) | (.[0] // null);
-            def resourceType:
-              if .kind == "Kustomization" then "kustomizations.kustomize.toolkit.fluxcd.io"
-              elif .kind == "HelmRelease" then "helmreleases.helm.toolkit.fluxcd.io"
-              else (.kind | ascii_downcase) + "s"
-              end;
-            def isStalledOrFailed:
-              (readyCond) as $r
-              | (stalledCond) as $s
-              | ($r != null and $r.status == "False" and (
-                  ($s != null and $s.status == "True") or
-                  (($r.reason // "") == "RetriesExceeded")
-                ));
-            {
-              stalled_or_failed: [ .items[]
-                | select(isStalledOrFailed)
-                | {namespace: .metadata.namespace, name: .metadata.name, kind: .kind, resource: resourceType, reason: (readyCond.reason // "unknown")}
-              ],
-              all_ready: ( (.items | length > 0) and ( [ .items[] | (readyCond.status // "") == "True" ] | all ) )
-            }
-          '
+          if [ -z "$WINDOW_SECONDS" ]; then WINDOW_SECONDS=900; fi
+          DEADLINE=$(( $(date +%s) + WINDOW_SECONDS ))
+          OUTCOME="inconclusive"
+          LAST_RESULT='{"all_ready":false,"stalled_or_failed":[],"diagnostics":[],"sample_valid":false,"superseded":false}'
+          LATEST_ATTESTATION_COUNTS='{}'
+          EXTRA_SUPERSEDED=false
+          POLL_INTERVAL_SECONDS=30
 
-          while [ "$(date +%s)" -lt "${DEADLINE_EPOCH}" ]; do
-            POLL_ERROR=""
+          collect_snapshot() {
+            destination="$1"
+            install -d -m 700 "$destination"
+            kubectl get kustomizations.kustomize.toolkit.fluxcd.io -A --chunk-size=500 -o json > "$destination/kustomizations.json" 2>"$PRIVATE/kubectl.err" || return 1
+            kubectl get helmreleases.helm.toolkit.fluxcd.io -A --chunk-size=500 -o json > "$destination/helmreleases.json" 2>"$PRIVATE/kubectl.err" || return 1
+            kubectl get gitrepositories.source.toolkit.fluxcd.io -A --chunk-size=500 -o json > "$destination/gitrepositories.json" 2>"$PRIVATE/kubectl.err" || return 1
+            kubectl get ocirepositories.source.toolkit.fluxcd.io -A --chunk-size=500 -o json > "$destination/ocirepositories.json" 2>"$PRIVATE/kubectl.err" || return 1
+            kubectl get helmrepositories.source.toolkit.fluxcd.io -A --chunk-size=500 -o json > "$destination/helmrepositories.json" 2>"$PRIVATE/kubectl.err" || return 1
+            kubectl get helmcharts.source.toolkit.fluxcd.io -A --chunk-size=500 -o json > "$destination/helmcharts.json" 2>"$PRIVATE/kubectl.err" || return 1
+          }
 
-            # One if/elif chain covering every fallible command in the
-            # iteration, each in a condition context so -e cannot terminate
-            # the step. The classification substitutions are guarded for the
-            # same reason as the kubectl call, not merely for tidiness: a
-            # Kubernetes API error body such as {"kind":"Status",...} passes
-            # the `jq -e .` syntax check above and then breaks the .items[]
-            # classifier, which killed the step at jq's exit 5 just as surely
-            # as a failed kubectl did.
-            if ! RAW_OUTPUT=$(kubectl get kustomizations.kustomize.toolkit.fluxcd.io,helmreleases.helm.toolkit.fluxcd.io -A -o json 2>/tmp/poll-err.log); then
-              POLL_ERROR="kubectl poll failed"
-            elif ! echo "${RAW_OUTPUT}" | jq -e . >/dev/null 2>&1; then
-              POLL_ERROR="kubectl poll failed to return JSON"
-            elif ! RESULT=$(echo "${RAW_OUTPUT}" | jq -c "${JQ_CLASSIFY}" 2>>/tmp/poll-err.log) \
-              || ! STALLED_COUNT=$(echo "${RESULT}" | jq '.stalled_or_failed | length' 2>>/tmp/poll-err.log) \
-              || ! ALL_READY=$(echo "${RESULT}" | jq -r '.all_ready' 2>>/tmp/poll-err.log); then
-              POLL_ERROR="kubectl poll returned JSON that is not a resource list this classifier can read"
+          snapshot_json() {
+            before_dir="$1"
+            after_dir="$2"
+            output="$3"
+            main_before="$4"
+            main_after="$5"
+            main_superseded="$6"
+            python3 - "$before_dir" "$after_dir" "$output" "$main_before" "$main_after" "$main_superseded" <<'PYTHON'
+          import json
+          import pathlib
+          import sys
+          before = pathlib.Path(sys.argv[1])
+          after = pathlib.Path(sys.argv[2])
+          result = {}
+          for phase, root in (("before", before), ("after", after)):
+              result[phase] = {}
+              for name in ("kustomizations", "helmreleases", "gitrepositories", "ocirepositories", "helmrepositories", "helmcharts"):
+                  result[phase][name] = json.loads((root / (name + ".json")).read_text())
+          result["main_before"] = sys.argv[4]
+          result["main_after"] = sys.argv[5]
+          result["superseded"] = sys.argv[6] == "true"
+          pathlib.Path(sys.argv[3]).write_text(json.dumps(result, separators=(",", ":")))
+          PYTHON
+            chmod 600 "$output"
+          }
+
+          while [ "$(date +%s)" -lt "$DEADLINE" ]; do
+            if ! MAIN_BEFORE=$(gh api "repos/$GITHUB_REPOSITORY/branches/main" --jq '.commit.sha' 2>"$PRIVATE/gh.err"); then
+              echo "WARNING: authenticated main read failed; retrying"
+              sleep "$POLL_INTERVAL_SECONDS"
+              continue
+            fi
+            if [ "$MAIN_BEFORE" != "$TARGET_SHA" ]; then
+              EXTRA_SUPERSEDED=true
+              LAST_RESULT=$(jq -cn --arg target "$TARGET_SHA" '{
+                target_sha:$target,
+                sample_valid:false,
+                superseded:true,
+                observed:{kustomizations:[],helmreleases:[],gitrepositories:[],ocirepositories:[],helmrepositories:[],helmcharts:[]},
+                kustomizations:[],
+                helm_releases:[],
+                diagnostics:[{kind:"Main",namespace:"",name:"main",code:"superseded",reason:"main-advanced"}]
+              } | '"$JQ_CLASSIFY")
+              OUTCOME="inconclusive"
+              break
             fi
 
-            if [ -n "${POLL_ERROR}" ]; then
-              # Fail-closed guarantee: an errored/unclassifiable iteration
-              # only ever falls through to "keep polling" — it can never set
-              # OUTCOME, so it can never produce a "healthy" verdict. One
-              # shared fall-through for every failure mode above, so no
-              # future branch can be added that skips the sleep/continue.
-              echo "WARNING: ${POLL_ERROR}; retrying in ${POLL_INTERVAL_SECONDS}s"
-              cat /tmp/poll-err.log 2>/dev/null || true
-              sleep "${POLL_INTERVAL_SECONDS}"
+            BEFORE_DIR="$PRIVATE/before"
+            AFTER_DIR="$PRIVATE/after"
+            if ! collect_snapshot "$BEFORE_DIR"; then
+              echo "WARNING: complete pre-render Kubernetes snapshot failed; retrying"
+              sleep "$POLL_INTERVAL_SECONDS"
+              continue
+            fi
+            if ! snapshot_json "$BEFORE_DIR" "$BEFORE_DIR" "$PRIVATE/pre-render-snapshots.json" "$MAIN_BEFORE" "" false; then
+              echo "WARNING: pre-render snapshot JSON was malformed; retrying"
+              sleep "$POLL_INTERVAL_SECONDS"
+              continue
+            fi
+            if ! python3 scripts/health-gate-attest.py --target-sha "$TARGET_SHA" --parent-sha "$PARENT_SHA" --snapshots "$PRIVATE/pre-render-snapshots.json" --repo-root "$GITHUB_WORKSPACE" --parent-root "$PARENT_ROOT" > "$PRIVATE/prepared-proof.json"; then
+              echo "WARNING: pre-render attestation execution failed; retrying"
+              sleep "$POLL_INTERVAL_SECONDS"
               continue
             fi
 
-            # Only assigned once the payload has classified cleanly, so the
-            # post-loop not-ready extraction can never inherit a shape the
-            # classifier already rejected.
-            LAST_JSON="${RAW_OUTPUT}"
-
-            if [ "${STALLED_COUNT}" -gt 0 ]; then
-              OUTCOME="unhealthy"
-              STALLED_OR_FAILED_JSON=$(echo "${RESULT}" | jq -c '.stalled_or_failed')
+            if ! collect_snapshot "$AFTER_DIR"; then
+              echo "WARNING: complete post-render Kubernetes snapshot failed; retrying"
+              sleep "$POLL_INTERVAL_SECONDS"
+              continue
+            fi
+            if ! MAIN_AFTER=$(gh api "repos/$GITHUB_REPOSITORY/branches/main" --jq '.commit.sha' 2>"$PRIVATE/gh.err"); then
+              echo "WARNING: authenticated closing main read failed; sample discarded"
+              sleep "$POLL_INTERVAL_SECONDS"
+              continue
+            fi
+            if [ "$MAIN_AFTER" != "$TARGET_SHA" ]; then
+              EXTRA_SUPERSEDED=true
+            fi
+            if ! snapshot_json "$BEFORE_DIR" "$AFTER_DIR" "$PRIVATE/sample.json" "$MAIN_BEFORE" "$MAIN_AFTER" "$EXTRA_SUPERSEDED"; then
+              echo "WARNING: sampled snapshot JSON was malformed; retrying"
+              sleep "$POLL_INTERVAL_SECONDS"
+              continue
+            fi
+            if ! python3 scripts/health-gate-attest.py --target-sha "$TARGET_SHA" --parent-sha "$PARENT_SHA" --snapshots "$PRIVATE/sample.json" --repo-root "$GITHUB_WORKSPACE" --parent-root "$PARENT_ROOT" > "$PRIVATE/proof.json"; then
+              echo "WARNING: attestation execution failed; retrying"
+              sleep "$POLL_INTERVAL_SECONDS"
+              continue
+            fi
+            LATEST_ATTESTATION_COUNTS=$(jq -c '{total:.counts.helmreleases_total,supported:.counts.helmreleases_supported,unsupported:.counts.helmreleases_unsupported,reason_codes:.counts.reason_codes}' "$PRIVATE/proof.json")
+            if ! cmp -s <(jq -S '{target_sha,parent_sha,kustomizations,helm_releases}' "$PRIVATE/prepared-proof.json") <(jq -S '{target_sha,parent_sha,kustomizations,helm_releases}' "$PRIVATE/proof.json"); then
+              echo "WARNING: target and parent render inputs changed during the sample; discarding"
+              sleep "$POLL_INTERVAL_SECONDS"
+              continue
+            fi
+            if ! LAST_RESULT=$(jq -c --argjson superseded "$EXTRA_SUPERSEDED" '.superseded = (.superseded or $superseded) | '"$JQ_CLASSIFY" "$PRIVATE/proof.json" 2>"$PRIVATE/jq.err"); then
+              echo "WARNING: sanitized proof could not be classified; retrying"
+              sleep "$POLL_INTERVAL_SECONDS"
+              continue
+            fi
+            if [ "$(printf '%s' "$LAST_RESULT" | jq -r '.superseded')" = "true" ]; then
+              OUTCOME="inconclusive"
               break
-            elif [ "${ALL_READY}" = "true" ]; then
+            fi
+            if [ "$(printf '%s' "$LAST_RESULT" | jq -r '.diagnostics | map(.code) | any(. == \"baseline-missing\" or . == \"merge-cas-unavailable\")')" = "true" ]; then
+              OUTCOME="inconclusive"
+              break
+            fi
+            if [ "$(printf '%s' "$LAST_RESULT" | jq -r '.all_ready')" = "true" ]; then
               OUTCOME="healthy"
               break
             fi
-
-            sleep "${POLL_INTERVAL_SECONDS}"
+            sleep "$POLL_INTERVAL_SECONDS"
           done
 
-          if [ -z "${OUTCOME}" ]; then
-            OUTCOME="inconclusive"
-            if [ -n "${LAST_JSON}" ]; then
-              # Guarded for the same reason as the loop above: this runs
-              # AFTER the outcome is decided but BEFORE it is written to
-              # $GITHUB_OUTPUT, so an unguarded failure here would discard a
-              # verdict the gate had already reached and skip every
-              # notification below. NOT_READY_JSON keeps its "[]" initializer
-              # on that path — an empty list is handled explicitly by the
-              # inconclusive-notification step.
-              if ! NOT_READY_JSON=$(echo "${LAST_JSON}" | jq -c '
-                def readyCond: (.status.conditions // []) | map(select(.type=="Ready")) | (.[0] // null);
-                def resourceType:
-                  if .kind == "Kustomization" then "kustomizations.kustomize.toolkit.fluxcd.io"
-                  elif .kind == "HelmRelease" then "helmreleases.helm.toolkit.fluxcd.io"
-                  else (.kind | ascii_downcase) + "s"
-                  end;
-                [ .items[] | select((readyCond.status // "") != "True") | {namespace: .metadata.namespace, name: .metadata.name, kind: .kind, resource: resourceType} ]
-              '); then
-                echo "WARNING: could not extract the not-ready list from the last successful poll; reporting inconclusive with an empty list"
-                NOT_READY_JSON="[]"
-              fi
-            fi
-          fi
-
-          echo "outcome=${OUTCOME}" >> "$GITHUB_OUTPUT"
-          echo "outcome=${OUTCOME}"
-
-          {
-            echo "stalled_or_failed<<POLLEOF"
-            echo "${STALLED_OR_FAILED_JSON}"
-            echo "POLLEOF"
-          } >> "$GITHUB_OUTPUT"
-
-          {
-            echo "not_ready_items<<POLLEOF"
-            echo "${NOT_READY_JSON}"
-            echo "POLLEOF"
-          } >> "$GITHUB_OUTPUT"
-
-      - name: Emit inconclusive notification
-        if: steps.poll.outputs.outcome == 'inconclusive'
-        env:
-          NOT_READY_ITEMS: ${{ steps.poll.outputs.not_ready_items }}
-        run: |
-          set -euo pipefail
-          # An EMPTY not-ready list is reachable and must be handled first.
-          # Two ways to get here: every poll in the window failed, so there is
-          # no Flux data at all (the run 31778908203 case, which only became
-          # reachable once the poll step stopped dying outright); or the poll
-          # legitimately saw zero Flux resources, which CR-01's empty-list
-          # guard correctly refuses to call healthy. In both cases jq '.[0].x'
-          # over an empty array returns the STRING "null" with exit 0 — so
-          # this step used to
-          # build a manifest naming namespace "null", kubectl create failed,
-          # the step died, and every notification was skipped. That would have
-          # relocated G-05-2's silence here rather than removing it.
-          if ! ITEM_COUNT=$(echo "${NOT_READY_ITEMS}" | jq 'length' 2>/dev/null); then
-            ITEM_COUNT=0
-          fi
-
-          if [ "${ITEM_COUNT}" -eq 0 ]; then
-            # Target a well-known object guaranteed to exist and already
-            # proven writable by this same ServiceAccount — the identical
-            # flux-system/cluster-apps target exclusion-gate.yaml's own
-            # HardExclusionBlocked event uses. It depends on no poll data,
-            # which is precisely what is missing on this path.
-            FOR_NS="flux-system"
-            FOR_NAME="cluster-apps"
-            FOR_KIND="Kustomization"
-            # Deliberately NOT the "still reconciling" wording used below: on
-            # this path the gate has no idea whether anything is reconciling.
-            # Saying so would be a lie, and a reassuring one.
-            DETAIL="no Flux resource data could be retrieved during the ${WINDOW_SECONDS}s observation window, so cluster health was never evaluated and this merge is UNWATCHED. See the poll step's WARNING output for the underlying kubectl/API failure."
+          if [ "$OUTCOME" = "healthy" ]; then
+            ALL_READY=true
+            echo "Health gate proved the complete target state for $TARGET_SHA."
           else
-            FOR_NS=$(echo "${NOT_READY_ITEMS}" | jq -r '.[0].namespace')
-            FOR_NAME=$(echo "${NOT_READY_ITEMS}" | jq -r '.[0].name')
-            FOR_KIND=$(echo "${NOT_READY_ITEMS}" | jq -r '.[0].kind')
-            MESSAGE=$(echo "${NOT_READY_ITEMS}" | jq -r '[.[] | "\(.namespace)/\(.name) (\(.kind))"] | join(", ")')
-            DETAIL="left the following resources still reconciling after the ${WINDOW_SECONDS}s observation window: ${MESSAGE}."
+            ALL_READY=false
+            echo "Health gate did not prove the target state for $TARGET_SHA."
           fi
-
-          case "${FOR_KIND}" in
-            Kustomization) FOR_API_VERSION="kustomize.toolkit.fluxcd.io/v1" ;;
-            HelmRelease) FOR_API_VERSION="helm.toolkit.fluxcd.io/v2" ;;
-            *) FOR_API_VERSION="v1" ;;
-          esac
-          NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-
-          # `kubectl create event` is not reliably available across kubectl
-          # versions (confirmed live in Plan 05-03: absent entirely on some
-          # builds, present-but-different-flags on others - this exact job
-          # hit "unknown flag: --for" against the dl.k8s.io "stable" 1.35.x
-          # build). Hand-rolling the v1/Event manifest and applying it
-          # directly is the proven cross-version-safe approach already used
-          # in Plan 05-03's synthetic-event tests.
-          #
-          # Unique name suffixed by GITHUB_RUN_ID (never static/reused) so a
-          # revert notification and a hard-exclusion notification can fire
-          # independently later without Kubernetes' own same-object
-          # event-aggregation collapsing them.
-          # kubectl create (not apply) - apply internally performs a get-first
-          # merge-patch check, which the health-gate ServiceAccount's RBAC
-          # deliberately does not grant on events (create-only, least-
-          # privilege per Plan 05-01/D-02) - confirmed live: apply failed
-          # "cannot get resource events" against this exact ServiceAccount.
-          kubectl create -f - <<EOF
-          apiVersion: v1
-          kind: Event
-          metadata:
-            name: health-gate-inconclusive-${GITHUB_RUN_ID}
-            namespace: ${FOR_NS}
-          involvedObject:
-            apiVersion: ${FOR_API_VERSION}
-            kind: ${FOR_KIND}
-            name: ${FOR_NAME}
-            namespace: ${FOR_NS}
-          reason: HealthGateInconclusive
-          message: "Merge ${GITHUB_SHA} to main ${DETAIL} Run: ${GITHUB_RUN_ID}"
-          type: Warning
-          firstTimestamp: "${NOW}"
-          lastTimestamp: "${NOW}"
-          count: 1
-          source:
-            component: health-gate.yaml
-          EOF
-
-      # ---------------------------------------------------------------
-      # Unhealthy branch (Plan 05-06): App-token exchange, bucket
-      # resolution, git revert (with conflict handling), circuit-breaker
-      # state write, revert-PR self-merge, revert notification. Every
-      # step below is gated to outcome == 'unhealthy'. The ambient
-      # default GITHUB_TOKEN stays contents:read throughout (see the
-      # job-level permissions comment above) — every git push / PR
-      # create / PR merge operation below authenticates exclusively via
-      # the separately-exchanged revert-bot App token in
-      # steps.app-token.outputs.token, never the default token.
-      # ---------------------------------------------------------------
-
-      - name: Exchange revert-bot App token
-        id: app-token
-        if: steps.poll.outputs.outcome == 'unhealthy'
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
-        with:
-          app-id: ${{ secrets.REVERT_BOT_APP_ID }}
-          private-key: ${{ secrets.REVERT_BOT_APP_PRIVATE_KEY }}
-
-      - name: Checkout main at merge commit
-        if: steps.poll.outputs.outcome == 'unhealthy'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.sha }}
-          # Full history: git revert needs the target commit's parent, and
-          # the bucket-resolution diff below needs github.event.before.
-          fetch-depth: 0
-          # This checkout's own git remote config already authenticates as
-          # the App for every push later in this job — no separate
-          # credential wiring needed downstream.
-          token: ${{ steps.app-token.outputs.token }}
-
-      - name: Resolve merge bucket(s)
-        id: bucket
-        if: steps.poll.outputs.outcome == 'unhealthy'
-        env:
-          BEFORE_SHA: ${{ github.event.before }}
-          AFTER_SHA: ${{ github.sha }}
-        run: |
-          set -euo pipefail
-          # Every unique two-segment kubernetes/apps/<namespace>/<app>
-          # prefix touched by this merge, D-06's bucketing granularity. A
-          # merge touching zero such paths falls back to the fixed
-          # "unscoped" bucket key — the revert action itself is never
-          # gated on bucket resolution succeeding. BEFORE_SHA is empty on
-          # workflow_dispatch runs (github.event.before only exists for
-          # push events); fall back to AFTER_SHA's own parent commit so
-          # a manually re-dispatched run (e.g. a window_override retry)
-          # still resolves the correct bucket instead of degrading to
-          # unscoped every time.
-          RESOLVED_BEFORE="${BEFORE_SHA}"
-          if [ -z "${RESOLVED_BEFORE}" ]; then
-            RESOLVED_BEFORE=$(git rev-parse "${AFTER_SHA}~1")
-          fi
-          BUCKETS_JSON=$(git diff --name-only "${RESOLVED_BEFORE}" "${AFTER_SHA}" \
-            | awk -F/ '$1=="kubernetes" && $2=="apps" && NF>=4 {print $3"/"$4}' \
+          echo "HelmRelease attestation counts: $LATEST_ATTESTATION_COUNTS"
+          REVERT_BUCKETS=$(git diff --name-only "$PARENT_SHA" "$TARGET_SHA" \
+            | awk -F/ '$1 == "kubernetes" && $2 == "apps" && NF >= 4 {print $3 "/" $4}' \
             | sort -u | jq -R . | jq -sc .)
-          if [ "${BUCKETS_JSON}" = "[]" ]; then
-            BUCKETS_JSON='["unscoped"]'
-          fi
-          echo "buckets=${BUCKETS_JSON}" >> "$GITHUB_OUTPUT"
-          echo "resolved buckets: ${BUCKETS_JSON}"
-
-      - name: git revert, or abort and notify on conflict
-        id: revert
-        if: steps.poll.outputs.outcome == 'unhealthy'
-        env:
-          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
-          MERGE_SHA: ${{ github.sha }}
-          BUCKETS: ${{ steps.bucket.outputs.buckets }}
-          STALLED_OR_FAILED: ${{ steps.poll.outputs.stalled_or_failed }}
-        run: |
-          # GitHub Actions' default bash step shell already runs with -e
-          # baked into its invocation (bash --noprofile --norc -eo pipefail
-          # {0}) — `set -uo pipefail` here does NOT remove that -e, so a
-          # bare `git revert ...` followed by `REVERT_STATUS=$?` never
-          # reaches the second line on failure; the whole step aborts
-          # immediately, skipping the abort+notify handling below entirely
-          # (found live: run 31170751825, exit 128, zero
-          # HealthGateRevertFailed event emitted). Testing the command as
-          # the direct condition of `if` is exempt from -e's early-exit
-          # behavior in POSIX/bash, which is what actually makes the
-          # explicit exit-code check below reachable.
-          set -uo pipefail
-          git config user.name "${APP_SLUG}[bot]"
-          git config user.email "${APP_SLUG}[bot]@users.noreply.github.com"
-
-          FIRST_BUCKET=$(echo "${BUCKETS}" | jq -r '.[0]')
-          SLUG=$(echo "${FIRST_BUCKET}" | tr '/' '-')
-          BRANCH="auto-revert/${SLUG}-${GITHUB_RUN_ID}"
-
-          git checkout -b "${BRANCH}"
-
-          # A merge commit (2+ parents — e.g. any PR merged via a merge
-          # commit, including the revert-bot's own self-merged revert PRs)
-          # cannot be reverted without -m specifying which parent is
-          # mainline; git revert otherwise fails with "commit is a merge
-          # but no -m option was given" (found live: run 31170751825).
-          # -m 1 reverts relative to the first parent, the standard
-          # convention for undoing what a merge introduced into the branch
-          # it was merged into.
-          # `|| true` is load-bearing: grep -c EXITS 1 when it counts zero
-          # matches, and `pipefail` is set, so a parentless commit (only the
-          # repo's root commit, hence barely reachable — but the failure mode
-          # is the silent one this whole change is about) would abort the step
-          # here and skip the revert plus every notification below it. grep -c
-          # still prints "0" on that path, so PARENT_COUNT stays correct.
-          PARENT_COUNT=$(git cat-file -p "${MERGE_SHA}" | grep -c '^parent ' || true)
-          REVERT_ARGS=(--no-edit)
-          if [ "${PARENT_COUNT}" -gt 1 ]; then
-            REVERT_ARGS+=(-m 1)
-          fi
-
-          if git revert "${REVERT_ARGS[@]}" "${MERGE_SHA}"; then
-            REVERT_STATUS=0
-          else
-            REVERT_STATUS=$?
-          fi
-
-          if [ "${REVERT_STATUS}" -ne 0 ]; then
-            git revert --abort
-
-            FOR_NS=$(echo "${STALLED_OR_FAILED}" | jq -r '.[0].namespace')
-            FOR_NAME=$(echo "${STALLED_OR_FAILED}" | jq -r '.[0].name')
-            FOR_KIND=$(echo "${STALLED_OR_FAILED}" | jq -r '.[0].kind')
-            case "${FOR_KIND}" in
-              Kustomization) FOR_API_VERSION="kustomize.toolkit.fluxcd.io/v1" ;;
-              HelmRelease) FOR_API_VERSION="helm.toolkit.fluxcd.io/v2" ;;
-              *) FOR_API_VERSION="v1" ;;
-            esac
-            NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-
-            # Hand-rolled Event manifest + kubectl create -f -, matching
-            # this job's own already-proven inconclusive-notification
-            # pattern above (kubectl create event is not reliably
-            # available across kubectl versions on this runner).
-            kubectl create -f - <<EOF
-          apiVersion: v1
-          kind: Event
-          metadata:
-            name: health-gate-revert-failed-${GITHUB_RUN_ID}
-            namespace: ${FOR_NS}
-          involvedObject:
-            apiVersion: ${FOR_API_VERSION}
-            kind: ${FOR_KIND}
-            name: ${FOR_NAME}
-            namespace: ${FOR_NS}
-          reason: HealthGateRevertFailed
-          message: "git revert of ${MERGE_SHA} failed with a conflict against main; git revert --abort was run and no revert PR was created. Run: ${GITHUB_RUN_ID}"
-          type: Warning
-          firstTimestamp: "${NOW}"
-          lastTimestamp: "${NOW}"
-          count: 1
-          source:
-            component: health-gate.yaml
-          EOF
-
-            exit 1
-          fi
-
-          echo "branch=${BRANCH}" >> "$GITHUB_OUTPUT"
-
-      - name: Update circuit-breaker state
-        if: steps.poll.outputs.outcome == 'unhealthy'
-        env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          BUCKETS: ${{ steps.bucket.outputs.buckets }}
-        run: |
-          set -euo pipefail
-          # Circuit-breaker threshold locked by 05-06-PLAN.md Task 1's
-          # human decision (resume-signal: n3-24h) — N=3 reverts to the
-          # SAME bucket within a rolling 24-hour window pauses auto-merge
-          # for that bucket. The Nth revert itself sets paused:true in
-          # this SAME update, never deferred to an (N+1)th revert.
-          WINDOW_SECONDS=86400
-          THRESHOLD=3
-          NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-
-          # Re-fetched fresh from main here (not reused from the earlier
-          # checkout) to minimize the staleness window for the
-          # concurrent-run race case (RESEARCH.md Pitfall 3).
-          gh api "repos/${{ github.repository }}/contents/.github/health-gate/circuit-breaker-state.json?ref=main" \
-            --jq '.content' | base64 -d > /tmp/circuit-breaker-state.json
-
-          for bucket in $(echo "${BUCKETS}" | jq -r '.[]'); do
-            jq --arg b "$bucket" --arg ts "$NOW" --argjson window "${WINDOW_SECONDS}" --argjson threshold "${THRESHOLD}" '
-              ($ts | fromdateiso8601) as $now_epoch
-              | .[$b] //= {reverts: [], paused: false}
-              | .[$b].reverts += [$ts]
-              | (.[$b].reverts | map(select(($now_epoch - (. | fromdateiso8601)) <= $window)) | length) as $recent_count
-              | .[$b].paused = ($recent_count >= $threshold)
-            ' /tmp/circuit-breaker-state.json > /tmp/circuit-breaker-state.json.new
-            mv /tmp/circuit-breaker-state.json.new /tmp/circuit-breaker-state.json
-          done
-
-          cp /tmp/circuit-breaker-state.json .github/health-gate/circuit-breaker-state.json
-          BUCKET_LIST=$(echo "${BUCKETS}" | jq -r 'join(", ")')
-
-          # Kept as a distinct commit from the git-revert commit itself,
-          # so the revert commit's own provenance stays a clean,
-          # unmodified `git revert`.
-          git add .github/health-gate/circuit-breaker-state.json
-          git commit -m "chore: update circuit-breaker state for ${BUCKET_LIST}"
-
-      - name: Push, create, and merge the revert PR
-        id: revert-pr
-        if: steps.poll.outputs.outcome == 'unhealthy'
-        env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          BRANCH: ${{ steps.revert.outputs.branch }}
-          BUCKETS: ${{ steps.bucket.outputs.buckets }}
-          MERGE_SHA: ${{ github.sha }}
-          STALLED_OR_FAILED: ${{ steps.poll.outputs.stalled_or_failed }}
-        run: |
-          set -euo pipefail
-          BUCKET_LIST=$(echo "${BUCKETS}" | jq -r 'join(", ")')
-          RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-
-          # D-03 (locked): the revert lands as an auto-merged revert PR,
-          # not a direct push to main — a visible PR trail for every
-          # revert, reusing PR-merge machinery instead of a separate
-          # direct-push credential path.
-          git push origin "${BRANCH}"
-
-          PR_URL=$(gh pr create \
-            --title "Auto-revert: ${BUCKET_LIST} unhealthy after ${MERGE_SHA:0:7}" \
-            --body "Health-gate detected Stalled/Failed conditions within the observation window after merging ${MERGE_SHA}. Bucket(s): ${BUCKET_LIST}. Run: ${RUN_URL}" \
-            --label automated-revert \
-            --head "${BRANCH}")
-          echo "pr_url=${PR_URL}" >> "$GITHUB_OUTPUT"
-
-          # No --auto: this repo has no branch protection or required
-          # status checks (RESEARCH.md, live-verified), so an immediate
-          # merge is correct.
-          MERGE_STATUS=0
-          gh pr merge --merge --delete-branch "${PR_URL}" || MERGE_STATUS=$?
-
-          if [ "${MERGE_STATUS}" -ne 0 ]; then
-            echo "First merge attempt failed (likely a conflict against main from a concurrent revert) — retrying exactly once"
-
-            git fetch origin main
-
-            # Unlike gh pr merge above, a bare `git rebase` here would abort
-            # this whole step silently on conflict (set -euo pipefail IS
-            # active for this step) with no operator-facing signal — the
-            # same class of gap found live in the "git revert, or abort"
-            # step (run 31170751825). Handle it explicitly instead.
-            if ! git rebase origin/main "${BRANCH}"; then
-              git rebase --abort
-
-              # The default has to live INSIDE the jq program. jq returns the
-              # string "null" with exit 0 for `.[0].namespace` over an empty
-              # array, so the `2>/dev/null || echo "default"` this replaces
-              # could never fire and would have named a namespace of "null".
-              FOR_NS=$(echo "${STALLED_OR_FAILED}" | jq -r '(.[0].namespace // "default")')
-              NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-              kubectl create -f - <<EOF
-          apiVersion: v1
-          kind: Event
-          metadata:
-            name: health-gate-revert-rebase-failed-${GITHUB_RUN_ID}
-            namespace: ${FOR_NS}
-          involvedObject:
-            apiVersion: v1
-            kind: Namespace
-            name: ${FOR_NS}
-            namespace: ${FOR_NS}
-          reason: HealthGateRevertFailed
-          message: "Retry-once rebase of ${BRANCH} onto origin/main failed with a conflict after the first PR-merge attempt failed; rebase was aborted and no revert PR was merged. Run: ${GITHUB_RUN_ID}"
-          type: Warning
-          firstTimestamp: "${NOW}"
-          lastTimestamp: "${NOW}"
-          count: 1
-          source:
-            component: health-gate.yaml
-          EOF
-
-              exit 1
-            fi
-
-            # Recompute the state-update commit against main's NEW
-            # current copy of circuit-breaker-state.json (not the stale
-            # copy this branch was originally built from).
-            gh api "repos/${{ github.repository }}/contents/.github/health-gate/circuit-breaker-state.json?ref=main" \
-              --jq '.content' | base64 -d > /tmp/circuit-breaker-state.json
-            NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-            for bucket in $(echo "${BUCKETS}" | jq -r '.[]'); do
-              jq --arg b "$bucket" --arg ts "$NOW" --argjson window 86400 --argjson threshold 3 '
-                ($ts | fromdateiso8601) as $now_epoch
-                | .[$b] //= {reverts: [], paused: false}
-                | .[$b].reverts += [$ts]
-                | (.[$b].reverts | map(select(($now_epoch - (. | fromdateiso8601)) <= $window)) | length) as $recent_count
-                | .[$b].paused = ($recent_count >= $threshold)
-              ' /tmp/circuit-breaker-state.json > /tmp/circuit-breaker-state.json.new
-              mv /tmp/circuit-breaker-state.json.new /tmp/circuit-breaker-state.json
-            done
-            cp /tmp/circuit-breaker-state.json .github/health-gate/circuit-breaker-state.json
-            git add .github/health-gate/circuit-breaker-state.json
-            git commit --amend --no-edit
-
-            # Force-push is scoped to this bot's own disposable
-            # auto-revert/* branch only, never main itself — this is the
-            # bot's own throwaway branch, not a history rewrite of main,
-            # so it does not violate HEALTH-03's forward-only constraint.
-            git push --force-with-lease origin "${BRANCH}"
-            gh pr merge --merge --delete-branch "${PR_URL}"
-          fi
-
-      - name: Emit revert notification
-        if: steps.poll.outputs.outcome == 'unhealthy'
-        env:
-          STALLED_OR_FAILED: ${{ steps.poll.outputs.stalled_or_failed }}
-          BUCKETS: ${{ steps.bucket.outputs.buckets }}
-          PR_URL: ${{ steps.revert-pr.outputs.pr_url }}
-          MERGE_SHA: ${{ github.sha }}
-        run: |
-          set -euo pipefail
-          FOR_NS=$(echo "${STALLED_OR_FAILED}" | jq -r '.[0].namespace')
-          FOR_NAME=$(echo "${STALLED_OR_FAILED}" | jq -r '.[0].name')
-          FOR_KIND=$(echo "${STALLED_OR_FAILED}" | jq -r '.[0].kind')
-          case "${FOR_KIND}" in
-            Kustomization) FOR_API_VERSION="kustomize.toolkit.fluxcd.io/v1" ;;
-            HelmRelease) FOR_API_VERSION="helm.toolkit.fluxcd.io/v2" ;;
-            *) FOR_API_VERSION="v1" ;;
-          esac
-          BUCKET_LIST=$(echo "${BUCKETS}" | jq -r 'join(", ")')
-          NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-
-          kubectl create -f - <<EOF
-          apiVersion: v1
-          kind: Event
-          metadata:
-            name: health-gate-revert-${GITHUB_RUN_ID}
-            namespace: ${FOR_NS}
-          involvedObject:
-            apiVersion: ${FOR_API_VERSION}
-            kind: ${FOR_KIND}
-            name: ${FOR_NAME}
-            namespace: ${FOR_NS}
-          reason: HealthGateAutoRevert
-          message: "Merge ${MERGE_SHA} to main reverted after ${BUCKET_LIST} reported Stalled/Failed within the observation window. Revert PR: ${PR_URL}"
-          type: Warning
-          firstTimestamp: "${NOW}"
-          lastTimestamp: "${NOW}"
-          count: 1
-          source:
-            component: health-gate.yaml
-          EOF
-
-      # Backstop. Every OTHER conditional step in this job carries an `if:`
-      # with no status-check function, and GitHub implicitly ANDs those with
-      # success() — so any step that dies skips every notification below it
-      # and the run ends in total silence (run 31778908203, gap G-05-2). The
-      # steps above make the poll and notification paths survivable, but
-      # several sites deliberately still fail loudly because a loud failure
-      # is the correct behavior there: the App-token exchange, the checkout,
-      # bucket resolution, the circuit-breaker fetch/commit, and the
-      # push/create/merge. This step is the floor under all of them.
-      - name: Backstop - guarantee an operator-facing signal on failure
-        # `failure()` IS a status-check function, so GitHub does not AND this
-        # with success() — that is the entire mechanism, and it is why this
-        # step survives an earlier step's death when nothing else does.
-        # Deliberately failure() and NOT always()/cancelled(): this job's
-        # concurrency group cancels a stale run whenever the same SHA is
-        # re-dispatched, and firing on routine cancellation would train the
-        # operator to ignore the one signal that means something.
-        if: failure()
-        env:
-          MERGE_SHA: ${{ github.sha }}
-          POLL_OUTCOME: ${{ steps.poll.outputs.outcome }}
-        run: |
-          set -uo pipefail
-          RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-          DETAIL="Health gate did not reach a verdict for merge ${MERGE_SHA}. This merge is UNWATCHED - no automatic revert will happen for it. Last recorded poll outcome: '${POLL_OUTCOME:-none}'. Run: ${RUN_URL}"
-
-          # Emitted FIRST, and with no cluster dependency whatsoever, so
-          # unlike the Event below it cannot itself be silenced by whatever
-          # failure got us here. This is the guaranteed signal; the Event is
-          # the best-effort one.
-          echo "::error title=Health gate did not reach a verdict::${DETAIL}"
+          if [ "$REVERT_BUCKETS" = "[]" ]; then REVERT_BUCKETS='["unscoped"]'; fi
           {
-            echo "### Health gate did not reach a verdict"
+            echo "all_ready=$ALL_READY"
+            echo "outcome=$OUTCOME"
+            echo "rollback_authorized=false"
+            echo "stalled_or_failed=[]"
+            echo "revert_buckets=$REVERT_BUCKETS"
+            echo "attestation_counts=$LATEST_ATTESTATION_COUNTS"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "diagnostics<<HEALTHGATEEOF"
+            printf '%s\n' "$LAST_RESULT"
+            echo "HEALTHGATEEOF"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "### Desired-input attestation"
             echo ""
-            echo "${DETAIL}"
+            echo "HelmRelease counts and unsupported reason codes: \`$LATEST_ATTESTATION_COUNTS\`."
           } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
 
-          # Both guards exist because an early bootstrap/auth failure is
-          # exactly the case this step must survive: on that path kubectl was
-          # never installed and KUBECONFIG was never exported, so referencing
-          # either unguarded would abort the backstop itself.
-          if ! command -v kubectl >/dev/null 2>&1; then
-            echo "WARNING: kubectl is not on PATH (the bootstrap step never completed) - the GitHub annotation above is the only signal for this run"
-            exit 0
-          fi
-          if [ -z "${KUBECONFIG:-}" ]; then
-            echo "WARNING: KUBECONFIG was never exported (the authenticate step never completed) - the GitHub annotation above is the only signal for this run"
-            exit 0
-          fi
-
+      - name: Emit inconclusive notification
+        id: notify-inconclusive
+        if: steps.poll.outputs.outcome == 'inconclusive'
+        env:
+          RESULT: ${{ steps.poll.outputs.diagnostics }}
+        run: |
+          set -euo pipefail
+          CODES=$(printf '%s' "$RESULT" | jq -r '[.diagnostics[]?.code] | unique | join(", ")')
+          DETAIL="Health gate could not prove target $GITHUB_SHA; reasons: ${CODES:-no-sample}. The run is inconclusive and will not trigger a rollback."
           NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-
-          # reason MUST stay on Robusta's four-entry allow-list
-          # (kubernetes/apps/observability/robusta/app/helmrelease.yaml) -
-          # an invented reason is silently dropped until that HelmRelease
-          # reconciles, which would recreate the exact silence this step
-          # exists to prevent. HealthGateInconclusive is also honest here:
-          # the gate reached no conclusion. It is distinguished from the
-          # ordinary inconclusive event by metadata.name, which Robusta
-          # renders as the Slack title ("title: $name").
-          #
-          # Targets flux-system/cluster-apps so it never depends on poll data
-          # that, on this path, may not exist.
-          if ! kubectl create -f - <<EOF
+          kubectl create -f - <<EOF
           apiVersion: v1
           kind: Event
           metadata:
-            name: health-gate-backstop-no-verdict-${GITHUB_RUN_ID}
+            name: health-gate-inconclusive-$GITHUB_RUN_ID
             namespace: flux-system
           involvedObject:
             apiVersion: kustomize.toolkit.fluxcd.io/v1
@@ -749,18 +486,137 @@ jobs:
             name: cluster-apps
             namespace: flux-system
           reason: HealthGateInconclusive
-          message: "${DETAIL}"
+          message: "$DETAIL"
           type: Warning
-          firstTimestamp: "${NOW}"
-          lastTimestamp: "${NOW}"
+          firstTimestamp: "$NOW"
+          lastTimestamp: "$NOW"
           count: 1
           source:
             component: health-gate.yaml
           EOF
-          then
-            echo "WARNING: could not create the HealthGateInconclusive backstop Event - the GitHub annotation above is the only signal for this run"
-          fi
 
-          # Always 0. The job's failed conclusion already comes from the step
-          # that actually broke; failing here too would mask the real cause.
-          exit 0
+      - name: Exchange revert-bot App token for an authorized revert
+        id: app-token
+        if: steps.poll.outputs.rollback_authorized == 'true'
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          app-id: ${{ secrets.REVERT_BOT_APP_ID }}
+          private-key: ${{ secrets.REVERT_BOT_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Create a revert proposal from the exact target
+        id: revert
+        if: steps.poll.outputs.rollback_authorized == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          TARGET_SHA: ${{ github.sha }}
+          REVERT_BUCKETS: ${{ steps.poll.outputs.revert_buckets }}
+        run: |
+          set -euo pipefail
+          CURRENT_MAIN=$(gh api "repos/$GITHUB_REPOSITORY/branches/main" --jq '.commit.sha')
+          if [ "$CURRENT_MAIN" != "$TARGET_SHA" ]; then
+            echo "main moved before revert publication; this proposal is superseded and will not be retargeted" >&2
+            exit 1
+          fi
+          FIRST_BUCKET=$(printf '%s' "$REVERT_BUCKETS" | jq -r '.[0]')
+          SLUG=$(printf '%s' "$FIRST_BUCKET" | tr '/' '-')
+          BRANCH="auto-revert/${SLUG}-${TARGET_SHA:0:12}-${GITHUB_RUN_ID}"
+          git config user.name "k8s-cluster-revert-bot[bot]"
+          git config user.email "k8s-cluster-revert-bot[bot]@users.noreply.github.com"
+          git switch --create "$BRANCH"
+          PARENT_COUNT=$(git cat-file -p "$TARGET_SHA" | grep -c '^parent ' || true)
+          REVERT_ARGS=(--no-edit)
+          if [ "$PARENT_COUNT" -gt 1 ]; then REVERT_ARGS+=(-m 1); fi
+          git revert "${REVERT_ARGS[@]}" "$TARGET_SHA"
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+
+      - name: Add the breaker charge to the revert proposal
+        id: circuit-breaker
+        if: steps.poll.outputs.rollback_authorized == 'true'
+        env:
+          TARGET_SHA: ${{ github.sha }}
+          REVERT_BUCKETS: ${{ steps.poll.outputs.revert_buckets }}
+        run: |
+          set -euo pipefail
+          WINDOW_SECONDS=86400
+          THRESHOLD=3
+          NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          STATE_FILE="$RUNNER_TEMP/circuit-breaker-state.json"
+          git show "$TARGET_SHA:.github/health-gate/circuit-breaker-state.json" > "$STATE_FILE"
+          chmod 600 "$STATE_FILE"
+          while IFS= read -r bucket; do
+            [ -n "$bucket" ] || continue
+            jq --arg b "$bucket" --arg ts "$NOW" --argjson window "$WINDOW_SECONDS" --argjson threshold "$THRESHOLD" '
+              ($ts | fromdateiso8601) as $now_epoch
+              | .[$b] //= {reverts: [], paused: false}
+              | .[$b].reverts += [$ts]
+              | (.[$b].reverts | map(select(($now_epoch - (. | fromdateiso8601)) <= $window)) | length) as $recent_count
+              | .[$b].paused = ($recent_count >= $threshold)
+            ' "$STATE_FILE" > "$STATE_FILE.new"
+            mv "$STATE_FILE.new" "$STATE_FILE"
+          done < <(printf '%s' "$REVERT_BUCKETS" | jq -r '.[]')
+          cp "$STATE_FILE" .github/health-gate/circuit-breaker-state.json
+          BUCKET_LIST=$(printf '%s' "$REVERT_BUCKETS" | jq -r 'join(", ")')
+          git add .github/health-gate/circuit-breaker-state.json
+          git commit -m "chore: update circuit-breaker state for $BUCKET_LIST"
+          echo "proposal_charge=true" >> "$GITHUB_OUTPUT"
+
+      - name: Publish the revert PR
+        id: revert-pr
+        if: steps.poll.outputs.rollback_authorized == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          BRANCH: ${{ steps.revert.outputs.branch }}
+          REVERT_BUCKETS: ${{ steps.poll.outputs.revert_buckets }}
+          TARGET_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          gh auth setup-git
+          git push origin "$BRANCH"
+          BUCKET_LIST=$(printf '%s' "$REVERT_BUCKETS" | jq -r 'join(", ")')
+          PR_URL=$(gh pr create \
+            --base main \
+            --head "$BRANCH" \
+            --title "Auto-revert: $BUCKET_LIST unhealthy after ${TARGET_SHA:0:7}" \
+            --label automated-revert \
+            --body "Health-gate evidence authorized a revert of $TARGET_SHA. The breaker charge is committed in this proposal and will take effect only if this revert PR lands.")
+          echo "pr_url=$PR_URL" >> "$GITHUB_OUTPUT"
+          echo "pr_number=${PR_URL##*/}" >> "$GITHUB_OUTPUT"
+
+      - name: Verify D-03 revert PR provenance
+        id: revert-provenance
+        if: steps.poll.outputs.rollback_authorized == 'true' && steps.revert-pr.outputs.pr_number != ''
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REVERT_PR: ${{ steps.revert-pr.outputs.pr_number }}
+          EXPECTED_BOT: ${{ vars.REVERT_BOT_LOGIN }}
+          TARGET_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          test -n "$REVERT_PR"
+          test -n "$EXPECTED_BOT"
+          PR_JSON=$(gh pr view "$REVERT_PR" --json author,baseRefName,headRefName,title,labels)
+          jq -e --arg bot "$EXPECTED_BOT" --arg sha "$TARGET_SHA" '
+            .author.login == $bot and .author.type == "Bot" and .baseRefName == "main" and
+            (.headRefName | startswith("auto-revert/")) and
+            (.headRefName | contains($sha[0:12])) and
+            (.title | startswith("Auto-revert:")) and
+            any(.labels[]; .name == "automated-revert")
+          ' <<< "$PR_JSON" >/dev/null
+          echo "provenance_valid=true" >> "$GITHUB_OUTPUT"
+
+      - name: Backstop - report a failed health-gate run
+        id: backstop
+        if: failure()
+        env:
+          POLL_OUTCOME: ${{ steps.poll.outputs.outcome }}
+        run: |
+          set -uo pipefail
+          DETAIL="Health gate failed before reaching a verdict for $GITHUB_SHA; last poll outcome: ${POLL_OUTCOME:-none}. No rollback was authorized."
+          echo "::error title=Health gate did not reach a verdict::$DETAIL"
+          {
+            echo "### Health gate did not reach a verdict"
+            echo ""
+            echo "$DETAIL"
+          } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"

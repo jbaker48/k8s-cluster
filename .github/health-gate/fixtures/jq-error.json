@@ -1,0 +1,354 @@
+{
+  "expected": {
+    "all_ready": false,
+    "diagnostic_codes": [
+      "jq-error"
+    ],
+    "sample_valid": false,
+    "superseded": false
+  },
+  "name": "jq-error",
+  "poll_expected": {
+    "all_ready": false,
+    "command_trace": [
+      "git-rev-parse",
+      "git-worktree-add",
+      "clock:100",
+      "clock:100",
+      "gh-main-target",
+      "kubectl-snapshot",
+      "producer-attest",
+      "kubectl-snapshot",
+      "gh-main-target",
+      "producer-attest",
+      "jq-classifier-error",
+      "sleep",
+      "clock:100",
+      "gh-main-target",
+      "kubectl-snapshot",
+      "producer-attest",
+      "kubectl-snapshot",
+      "gh-main-target",
+      "producer-attest",
+      "jq-classifier-pass",
+      "sleep",
+      "clock:101",
+      "git-diff",
+      "git-worktree-remove",
+      "clock-utc",
+      "kubectl-create-event"
+    ],
+    "outcome": "inconclusive",
+    "superseded": false
+  },
+  "poll_responses": {
+    "classifier": [
+      "error",
+      "pass"
+    ],
+    "clock": [
+      "100",
+      "100",
+      "100",
+      "101"
+    ],
+    "kubectl": [
+      "list",
+      "list",
+      "list",
+      "list",
+      "list",
+      "list",
+      "list",
+      "list",
+      "list",
+      "list",
+      "list",
+      "list",
+      "list",
+      "list",
+      "list",
+      "list",
+      "list",
+      "list",
+      "list",
+      "list",
+      "list",
+      "list",
+      "list",
+      "list"
+    ],
+    "main": [
+      "target",
+      "target",
+      "target",
+      "target"
+    ],
+    "producer": [
+      "proof",
+      "proof",
+      "proof",
+      "proof"
+    ]
+  },
+  "poll_scenario": "jq-error",
+  "proof": {
+    "diagnostics": [
+      {
+        "code": "jq-error",
+        "kind": "Sample",
+        "name": "",
+        "namespace": "",
+        "reason": "jq-error"
+      }
+    ],
+    "helm_releases": [
+      {
+        "changed_inputs": false,
+        "desired_spec_hash": "hash",
+        "name": "demo",
+        "namespace": "apps",
+        "owner": {
+          "name": "app-owner",
+          "namespace": "flux-system"
+        },
+        "reason_code": "supported",
+        "source_digest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "source_kind": "OCIRepository",
+        "source_name": "chart",
+        "source_namespace": "flux-system",
+        "source_tag": "1.2.3",
+        "supported": true
+      }
+    ],
+    "kustomizations": [
+      {
+        "name": "cluster",
+        "namespace": "flux-system",
+        "reason_code": "supported",
+        "supported": true
+      },
+      {
+        "name": "cluster-apps",
+        "namespace": "flux-system",
+        "reason_code": "supported",
+        "supported": true
+      },
+      {
+        "name": "app-owner",
+        "namespace": "flux-system",
+        "reason_code": "supported",
+        "supported": true
+      }
+    ],
+    "observed": {
+      "gitrepositories": [
+        {
+          "kind": "GitRepository",
+          "metadata": {
+            "generation": 1,
+            "labels": {},
+            "name": "home-kubernetes",
+            "namespace": "flux-system",
+            "resourceVersion": "rv-git",
+            "uid": "uid-git"
+          },
+          "metadata_hash": "x",
+          "spec_hash": "x",
+          "status": {
+            "artifact_revision": "main@sha1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "conditions": [
+              {
+                "observedGeneration": 1,
+                "status": "True",
+                "type": "Ready"
+              }
+            ],
+            "observedGeneration": 1
+          },
+          "suspended": false
+        }
+      ],
+      "helmcharts": [],
+      "helmreleases": [
+        {
+          "kind": "HelmRelease",
+          "metadata": {
+            "generation": 1,
+            "labels": {
+              "kustomize.toolkit.fluxcd.io/name": "app-owner",
+              "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+            },
+            "name": "demo",
+            "namespace": "apps",
+            "resourceVersion": "rv-hr-demo",
+            "uid": "uid-hr-demo"
+          },
+          "metadata_hash": "x",
+          "spec_hash": "x",
+          "status": {
+            "conditions": [
+              {
+                "observedGeneration": 1,
+                "status": "True",
+                "type": "Ready"
+              }
+            ],
+            "history": [
+              {
+                "chartVersion": "1.2.3",
+                "configDigest": "cfg-current",
+                "status": "deployed",
+                "version": 4
+              }
+            ],
+            "lastAttemptedConfigDigest": "cfg-current",
+            "lastAttemptedGeneration": 1,
+            "lastAttemptedRevision": "1.2.3+dddddddddddd",
+            "lastAttemptedRevisionDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "observedGeneration": 1
+          },
+          "suspended": false
+        }
+      ],
+      "helmrepositories": [],
+      "kustomizations": [
+        {
+          "kind": "Kustomization",
+          "metadata": {
+            "generation": 1,
+            "labels": {},
+            "name": "cluster",
+            "namespace": "flux-system",
+            "resourceVersion": "rv-ks-cluster",
+            "uid": "uid-ks-cluster"
+          },
+          "metadata_hash": "x",
+          "spec": {
+            "sourceRef": {
+              "kind": "GitRepository",
+              "name": "home-kubernetes"
+            },
+            "suspend": false
+          },
+          "spec_hash": "x",
+          "status": {
+            "conditions": [
+              {
+                "observedGeneration": 1,
+                "status": "True",
+                "type": "Ready"
+              }
+            ],
+            "inventory_ids": [],
+            "lastAppliedRevision": "main@sha1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "lastAttemptedRevision": "main@sha1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "observedGeneration": 1
+          },
+          "suspended": false
+        },
+        {
+          "kind": "Kustomization",
+          "metadata": {
+            "generation": 1,
+            "labels": {},
+            "name": "cluster-apps",
+            "namespace": "flux-system",
+            "resourceVersion": "rv-ks-cluster-apps",
+            "uid": "uid-ks-cluster-apps"
+          },
+          "metadata_hash": "x",
+          "spec": {
+            "sourceRef": {
+              "kind": "GitRepository",
+              "name": "home-kubernetes"
+            },
+            "suspend": false
+          },
+          "spec_hash": "x",
+          "status": {
+            "conditions": [
+              {
+                "observedGeneration": 1,
+                "status": "True",
+                "type": "Ready"
+              }
+            ],
+            "inventory_ids": [],
+            "lastAppliedRevision": "main@sha1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "lastAttemptedRevision": "main@sha1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "observedGeneration": 1
+          },
+          "suspended": false
+        },
+        {
+          "kind": "Kustomization",
+          "metadata": {
+            "generation": 1,
+            "labels": {},
+            "name": "app-owner",
+            "namespace": "flux-system",
+            "resourceVersion": "rv-ks-app-owner",
+            "uid": "uid-ks-app-owner"
+          },
+          "metadata_hash": "x",
+          "spec": {
+            "sourceRef": {
+              "kind": "GitRepository",
+              "name": "home-kubernetes"
+            },
+            "suspend": false
+          },
+          "spec_hash": "x",
+          "status": {
+            "conditions": [
+              {
+                "observedGeneration": 1,
+                "status": "True",
+                "type": "Ready"
+              }
+            ],
+            "inventory_ids": [
+              "apps_demo_helm.toolkit.fluxcd.io_HelmRelease"
+            ],
+            "lastAppliedRevision": "main@sha1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "lastAttemptedRevision": "main@sha1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "observedGeneration": 1
+          },
+          "suspended": false
+        }
+      ],
+      "ocirepositories": [
+        {
+          "kind": "OCIRepository",
+          "metadata": {
+            "generation": 1,
+            "labels": {},
+            "name": "chart",
+            "namespace": "flux-system",
+            "resourceVersion": "rv-oci",
+            "uid": "uid-oci"
+          },
+          "metadata_hash": "x",
+          "spec_hash": "x",
+          "status": {
+            "artifact_revision": "1.2.3@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+            "conditions": [
+              {
+                "observedGeneration": 1,
+                "status": "True",
+                "type": "Ready"
+              }
+            ],
+            "observedGeneration": 1
+          },
+          "suspended": false
+        }
+      ]
+    },
+    "parent_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "sample_valid": false,
+    "superseded": false,
+    "target_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  }
+}

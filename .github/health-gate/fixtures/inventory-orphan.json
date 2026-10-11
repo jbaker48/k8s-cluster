@@ -1,0 +1,28 @@
+{
+  "name": "inventory-orphan",
+  "base_fixture": "stable-supported-target",
+  "proof_mutations": [
+    {
+      "path": [
+        "proof",
+        "observed",
+        "kustomizations",
+        2,
+        "status",
+        "inventory_ids"
+      ],
+      "value": [
+        "apps_demo_helm.toolkit.fluxcd.io_HelmRelease",
+        "apps_missing_helm.toolkit.fluxcd.io_HelmRelease"
+      ]
+    }
+  ],
+  "expected": {
+    "all_ready": false,
+    "diagnostic_codes": [
+      "inventory-orphan"
+    ],
+    "sample_valid": false,
+    "superseded": false
+  }
+}

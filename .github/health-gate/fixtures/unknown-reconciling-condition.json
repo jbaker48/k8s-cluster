@@ -1,0 +1,36 @@
+{
+  "name": "unknown-reconciling-condition",
+  "base_fixture": "stable-supported-target",
+  "proof_mutations": [
+    {
+      "path": [
+        "proof",
+        "observed",
+        "helmreleases",
+        0,
+        "status",
+        "conditions"
+      ],
+      "value": [
+        {
+          "observedGeneration": 1,
+          "status": "True",
+          "type": "Ready"
+        },
+        {
+          "observedGeneration": 1,
+          "status": "Unknown",
+          "type": "Reconciling"
+        }
+      ]
+    }
+  ],
+  "expected": {
+    "all_ready": false,
+    "diagnostic_codes": [
+      "helm-attempt-not-settled"
+    ],
+    "sample_valid": true,
+    "superseded": false
+  }
+}

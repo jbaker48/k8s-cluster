@@ -26,7 +26,8 @@ jobs:
       contents: read
     steps:
       - name: Checkout target commit
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: >-
+          actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
@@ -38,34 +39,43 @@ jobs:
           set -euo pipefail
           GH_VERSION="2.97.0"
           GH_SHA256="a2c9b8497e1f85b1ad0dfcb78b5a622e098801b8e461e459e88e1ee12f018112"
-          curl -fsSL -o /tmp/gh.tar.gz "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.tar.gz"
+          GH_URL="https://github.com/cli/cli/releases/download/v${GH_VERSION}"
+          GH_ARCHIVE="gh_${GH_VERSION}_linux_amd64.tar.gz"
+          curl -fsSL -o /tmp/gh.tar.gz "$GH_URL/$GH_ARCHIVE"
           echo "$GH_SHA256  /tmp/gh.tar.gz" | sha256sum -c -
           tar -xzf /tmp/gh.tar.gz -C /tmp
-          sudo install -m 755 "/tmp/gh_${GH_VERSION}/bin/gh" /usr/local/bin/gh
+          sudo install -m 755 "/tmp/gh_${GH_VERSION}_linux_amd64/bin/gh" /usr/local/bin/gh
 
           KUBECTL_VERSION="$(curl -fsSL https://dl.k8s.io/release/stable-1.35.txt)"
-          curl -fsSL -o /tmp/kubectl "https://dl.k8s.io/release/$KUBECTL_VERSION/bin/linux/amd64/kubectl"
-          curl -fsSL -o /tmp/kubectl.sha256 "https://dl.k8s.io/release/$KUBECTL_VERSION/bin/linux/amd64/kubectl.sha256"
+          KUBECTL_URL="https://dl.k8s.io/release/$KUBECTL_VERSION/bin/linux/amd64"
+          curl -fsSL -o /tmp/kubectl "$KUBECTL_URL/kubectl"
+          curl -fsSL -o /tmp/kubectl.sha256 "$KUBECTL_URL/kubectl.sha256"
           echo "$(cat /tmp/kubectl.sha256)  /tmp/kubectl" | sha256sum -c -
           sudo install -m 755 /tmp/kubectl /usr/local/bin/kubectl
 
           FLUX_VERSION="2.8.5"
           FLUX_SHA256="63c178ba938a5443265b2ce02691c005acf4ef6188d4dbb9b9d87333558948c4"
-          curl -fsSL -o /tmp/flux.tar.gz "https://github.com/fluxcd/flux2/releases/download/v${FLUX_VERSION}/flux_${FLUX_VERSION}_linux_amd64.tar.gz"
+          FLUX_URL="https://github.com/fluxcd/flux2/releases/download/v${FLUX_VERSION}"
+          FLUX_ARCHIVE="flux_${FLUX_VERSION}_linux_amd64.tar.gz"
+          curl -fsSL -o /tmp/flux.tar.gz "$FLUX_URL/$FLUX_ARCHIVE"
           echo "$FLUX_SHA256  /tmp/flux.tar.gz" | sha256sum -c -
           tar -xzf /tmp/flux.tar.gz -C /tmp flux
           sudo install -m 755 /tmp/flux /usr/local/bin/flux
 
           KUSTOMIZE_VERSION="v5.8.1"
           KUSTOMIZE_SHA256="029a7f0f4e1932c52a0476cf02a0fd855c0bb85694b82c338fc648dcb53a819d"
-          curl -fsSL -o /tmp/kustomize.tar.gz "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize/${KUSTOMIZE_VERSION}/kustomize_${KUSTOMIZE_VERSION}_linux_amd64.tar.gz"
+          KUSTOMIZE_URL="https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize"
+          KUSTOMIZE_ARCHIVE="kustomize_${KUSTOMIZE_VERSION}_linux_amd64.tar.gz"
+          curl -fsSL -o /tmp/kustomize.tar.gz \
+            "$KUSTOMIZE_URL/$KUSTOMIZE_VERSION/$KUSTOMIZE_ARCHIVE"
           echo "$KUSTOMIZE_SHA256  /tmp/kustomize.tar.gz" | sha256sum -c -
           tar -xzf /tmp/kustomize.tar.gz -C /tmp kustomize
           sudo install -m 755 /tmp/kustomize /usr/local/bin/kustomize
 
           YQ_VERSION="v4.52.5"
           YQ_SHA256="75d893a0d5940d1019cb7cdc60001d9e876623852c31cfc6267047bc31149fa9"
-          curl -fsSL -o /tmp/yq "https://github.com/mikefarah/yq/releases/download/$YQ_VERSION/yq_linux_amd64"
+          YQ_URL="https://github.com/mikefarah/yq/releases/download/$YQ_VERSION"
+          curl -fsSL -o /tmp/yq "$YQ_URL/yq_linux_amd64"
           echo "$YQ_SHA256  /tmp/yq" | sha256sum -c -
           sudo install -m 755 /tmp/yq /usr/local/bin/yq
 
@@ -91,13 +101,17 @@ jobs:
           WINDOW_OVERRIDE: ${{ inputs.window_override_seconds }}
         run: |
           set -euo pipefail
-          if [ "$EVENT_NAME" = "workflow_dispatch" ] && [ -n "$WINDOW_OVERRIDE" ]; then
+          if [ "$EVENT_NAME" = "workflow_dispatch" ] \
+            && [ -n "$WINDOW_OVERRIDE" ]; then
             WINDOW_SECONDS="$WINDOW_OVERRIDE"
           else
             WINDOW_SECONDS=900
           fi
           case "$WINDOW_SECONDS" in
-            ''|*[!0-9]*) echo "window must be an integer number of seconds" >&2; exit 2 ;;
+            ''|*[!0-9]*)
+              echo "window must be an integer number of seconds" >&2
+              exit 2
+              ;;
           esac
           if [ "$WINDOW_SECONDS" -lt 1 ] || [ "$WINDOW_SECONDS" -gt 3600 ]; then
             echo "window must be between 1 and 3600 seconds" >&2
@@ -113,12 +127,31 @@ jobs:
           set -euo pipefail
           umask 077
           JQ_CLASSIFY=$(cat <<'JQ_CLASSIFY_EOF'
-          def conditions($r; $type): [($r.status.conditions // [])[] | select(.type == $type)];
+          def conditions($r; $type):
+            [($r.status.conditions // [])[] | select(.type == $type)];
           def conditions_valid($r):
             ($r.status.conditions // []) as $c
             | (($c | type) == "array")
               and ([$c[].type] | length == (unique | length))
-              and ([$c[] | select((.type | type) != "string" or (.type | length) == 0)] | length == 0);
+              and ([
+                $c[]
+                | select((.type | type) != "string" or (.type | length) == 0)
+              ] | length == 0)
+              and ([
+                $c[]
+                | select((.status | type) != "string" or
+                         (.status != "True" and .status != "False" and
+                          .status != "Unknown"))
+              ] | length == 0)
+              and ([
+                $c[]
+                | select(.observedGeneration != null and
+                         (.observedGeneration | type) != "number")
+              ] | length == 0);
+          def quiet($r; $type):
+            (conditions($r; $type)) as $c
+            | ($c | length) == 0 or
+              (($c | length) == 1 and $c[0].status == "False");
           def ready($r):
             (conditions($r; "Ready")) as $c
             | (($c | length) == 1)
@@ -129,24 +162,41 @@ jobs:
               and $c[0].status == "True"
               and $c[0].observedGeneration == $r.metadata.generation
               and $r.status.observedGeneration == $r.metadata.generation
-              and ((conditions($r; "Reconciling") | map(select(.status == "True")) | length) == 0)
-              and ((conditions($r; "Stalled") | map(select(.status == "True")) | length) == 0);
+              and quiet($r; "Reconciling")
+              and quiet($r; "Stalled");
           def target_revision($r; $t):
             $r.status.lastAttemptedRevision == ("main@sha1:" + $t)
             and $r.status.lastAppliedRevision == ("main@sha1:" + $t);
           def owner_ref($r):
-            (($r.metadata.labels["kustomize.toolkit.fluxcd.io/namespace"] // "flux-system") + "/" +
+            (($r.metadata.labels["kustomize.toolkit.fluxcd.io/namespace"] //
+              "flux-system") + "/" +
              ($r.metadata.labels["kustomize.toolkit.fluxcd.io/name"] // ""));
           def owner_identity($r):
-            (($r.metadata.namespace // "default") + "/" + ($r.metadata.name // ""));
+            (($r.metadata.namespace // "default") + "/" +
+             ($r.metadata.name // ""));
           def has_inventory($owner; $hr):
             (($owner.status.inventory_ids // []) | index(
               (($hr.metadata.namespace // "default") + "_" + $hr.metadata.name +
                "_helm.toolkit.fluxcd.io_HelmRelease")
             )) != null;
+          def helm_inventory_id($hr):
+            (($hr.metadata.namespace // "default") + "_" + $hr.metadata.name +
+             "_helm.toolkit.fluxcd.io_HelmRelease");
+          def has_helm_inventory($ks; $hr):
+            (($ks.status.inventory_ids // [])
+             | index(helm_inventory_id($hr))) != null;
           def latest_deployed($r):
-            [($r.status.history // [])[] | select(.status == "deployed")]
-            | sort_by(.version // 0) | last;
+            ($r.status.history // null) as $history
+            | if ($history | type) == "array" and ($history | length) > 0
+                 and all($history[];
+                   (.version | type) == "number" and .version >= 1
+                   and .version == (.version | floor)
+                   and (.status | type) == "string")
+                 and (($history | map(.version) | unique | length) ==
+                      ($history | length))
+              then ($history | sort_by(.version) | last)
+              else null
+              end;
           def candidate_owner_exception($p; $ks; $target; $parent):
             ($ks.status.lastAppliedRevision == ("main@sha1:" + $parent))
             and $ks.status.lastAttemptedRevision == ("main@sha1:" + $target)
@@ -155,10 +205,13 @@ jobs:
                        and .checks.complete_stable_sample == true
                        and .checks.not_superseded == true
                        and .checks.target_changed_effective_inputs == true
-                       and .checks.healthy_premerge_baseline_same_hr_uid == false
+                       and
+                         .checks.healthy_premerge_baseline_same_hr_uid == false
                        and .checks.live_desired_spec_and_source_match == true
                        and .checks.unique_current_owner_inventory == true
-                       and .checks.attempted_generation_and_chart_identity_match == true
+                       and
+                         (.checks.attempted_generation_and_chart_identity_match
+                          == true)
                        and .checks.current_terminal_retry_exhaustion == true
                        and .checks.no_competing_failure == true
                        and .checks.server_enforced_base_sha_merge_cas == false)
@@ -171,65 +224,131 @@ jobs:
           | ($p.observed.helmreleases // []) as $allhrs
           | ($allhrs | map(select(.suspended != true))) as $activehrs
           | ($p.observed.gitrepositories // []
-             | map(select(.metadata.namespace == "flux-system" and .metadata.name == "home-kubernetes"))
+               | map(select(.metadata.namespace == "flux-system" and
+                            .metadata.name == "home-kubernetes"))
              | .[0] // null) as $git
-          | ([ $allks[] | select(.metadata.namespace == "flux-system" and
-                                (.metadata.name == "cluster" or .metadata.name == "cluster-apps")) ]) as $roots
-          | ([ $p.kustomizations[]? | select(.supported != true) ]) as $unsupportedks
-          | ([ $p.helm_releases[]? | select(.supported != true) ]) as $unsupportedhrs
+          | ([ $allks[]
+               | select(.metadata.namespace == "flux-system" and
+                       (.metadata.name == "cluster" or
+                        .metadata.name == "cluster-apps")) ]) as $roots
+          | ([ $p.kustomizations[]? | select(.supported != true) ])
+            as $unsupportedks
+          | ([ $p.helm_releases[]? | select(.supported != true) ])
+            as $unsupportedhrs
           | ([ $activehrs[] as $hr
-               | ($p.helm_releases | map(select(.namespace == $hr.metadata.namespace and .name == $hr.metadata.name)) | .[0] // null) as $proof
-               | select($proof == null or $proof.supported != true) ]) as $badhrs
+               | ($p.helm_releases
+                  | map(select(.namespace == $hr.metadata.namespace and
+                              .name == $hr.metadata.name))
+                  | .[0] // null) as $proof
+               | select($proof == null or $proof.supported != true)
+             ]) as $badhrs
           | ([ $activehrs[] as $hr
-               | ($allks | map(select(owner_identity(.) == owner_ref($hr)))) as $owners
+               | ($allks
+                  | map(select(owner_identity(.) == owner_ref($hr)))) as $owners
                | ($owners | .[0] // null) as $owner
-               | ($allks | map(select(has_inventory(.; $hr))) | length) as $inventory_owners
+               | ($allks | map(select(has_inventory(.; $hr))) | length)
+                 as $inventory_owners
                | select(($owners | length) != 1 or $inventory_owners != 1
-                       or $owner.suspended == true or (has_inventory($owner; $hr) | not)) ]) as $badowners
+                       or $owner.suspended == true
+                       or (has_inventory($owner; $hr) | not)) ]) as $badowners
+          | ([ $allhrs[] as $hr
+               | select(([ $allks[]
+                          | select(has_helm_inventory(.; $hr)) ] | length) != 1)
+             ]) as $inventorymissing
+          | ([ $allks[] as $ks
+               | [($ks.status.inventory_ids // [])[]?
+                  | select(type == "string" and
+                          endswith("_helm.toolkit.fluxcd.io_HelmRelease"))
+                 ] as $ids
+               | select(($ids | unique | length) != ($ids | length))
+             ]) as $inventoryduplicates
+          | ([ $allks[] as $ks
+               | ($ks.status.inventory_ids // [])[]? as $id
+               | select(($id | type) == "string"
+                       and
+                         ($id
+                          | endswith("_helm.toolkit.fluxcd.io_HelmRelease")))
+               | select([ $allhrs[]
+                         | select(helm_inventory_id(.) == $id) ] | length != 1)
+               | {ks:$ks, id:$id} ]) as $inventoryorphans
           | ([ $p.helm_releases[]? as $proof
-               | select([$allhrs[] | select(.metadata.namespace == $proof.namespace and
-                                            .metadata.name == $proof.name)] | length == 0) ]) as $missinghrs
+               | select([$allhrs[]
+                        | select(.metadata.namespace == $proof.namespace and
+                                .metadata.name == $proof.name)] | length == 0)
+             ]) as $missinghrs
           | ([ $p.kustomizations[]? as $proof
-               | select([$allks[] | select(.metadata.namespace == $proof.namespace and
-                                            .metadata.name == $proof.name)] | length == 0) ]) as $missingks
+               | select([$allks[]
+                        | select(.metadata.namespace == $proof.namespace and
+                                .metadata.name == $proof.name)] | length == 0)
+             ]) as $missingks
           | ([ $activehrs[] as $hr
-               | ($p.helm_releases | map(select(.namespace == $hr.metadata.namespace and .name == $hr.metadata.name)) | .[0] // null) as $proof
+               | ($p.helm_releases
+                  | map(select(.namespace == $hr.metadata.namespace and
+                              .name == $hr.metadata.name))
+                  | .[0] // null) as $proof
                | select($proof != null and $proof.supported == true)
                | ($p.observed.ocirepositories
-                  | map(select(.metadata.namespace == $proof.source_namespace and .metadata.name == $proof.source_name))
+                  | map(select(.metadata.namespace == $proof.source_namespace
+                               and
+                               .metadata.name == $proof.source_name))
                   | .[0] // null) as $source
                | ($hr.status.lastAttemptedConfigDigest // "") as $attempt
                | (latest_deployed($hr)) as $deployed
-               | select($hr.metadata.generation != $hr.status.lastAttemptedGeneration
-                        or $hr.metadata.generation != $hr.status.observedGeneration
-                        or $hr.status.lastAttemptedRevision != ($proof.source_tag + "+" + ($proof.source_digest | sub("^sha256:"; "")[0:12]))
-                        or $hr.status.lastAttemptedRevisionDigest != $proof.source_digest
+               | select($hr.metadata.generation !=
+                        $hr.status.lastAttemptedGeneration
+                        or $hr.metadata.generation !=
+                           $hr.status.observedGeneration
+                        or $hr.status.lastAttemptedRevision !=
+                           ($proof.source_tag + "+" +
+                            ($proof.source_digest | sub("^sha256:"; "")[0:12]))
+                        or $hr.status.lastAttemptedRevisionDigest !=
+                           $proof.source_digest
                         or $source == null
-                        or $source.status.artifact_revision != ($proof.source_tag + "@" + $proof.source_digest)
+                        or $source.status.artifact_revision !=
+                           ($proof.source_tag + "@" + $proof.source_digest)
                         or (ready($source) | not)
-                        or $deployed == null or $attempt == "" or $deployed.configDigest != $attempt
+                        or $deployed == null or $deployed.status != "deployed"
+                        or $deployed.chartVersion != $proof.source_tag
+                        or $deployed.ociDigest != $proof.source_digest
+                        or $attempt == "" or $deployed.configDigest != $attempt
                         or (ready($hr) | not)) ]) as $badhrhealth
-          | ([ $activeks[] | select((ready(.) | not) or (target_revision(.; $t) | not)
-                          or .spec.sourceRef.kind != "GitRepository"
-                          or .spec.sourceRef.name != "home-kubernetes"
-                          or ((.spec.sourceRef.namespace // .metadata.namespace) != "flux-system")) ]) as $badkshealth
+          | ([ $activeks[]
+               | select((ready(.) | not) or (target_revision(.; $t) | not)
+                       or .spec.sourceRef.kind != "GitRepository"
+                       or .spec.sourceRef.name != "home-kubernetes"
+                       or ((.spec.sourceRef.namespace // .metadata.namespace) !=
+                           "flux-system")) ]) as $badkshealth
           | ([ $activeks[] | select((target_revision(.; $t) | not)
-                          and (candidate_owner_exception($p; .; $t; $p.parent_sha // "") | not)) ]) as $mixed
+                          and
+                            (candidate_owner_exception($p; .; $t;
+                              $p.parent_sha // "") | not)) ]) as $mixed
           | ([ $activeks[] | select((conditions(.; "Ready") | length) != 1
+                                    or (conditions_valid(.) | not)
                                     or .metadata.generation == null
-                                    or .status.observedGeneration == null) ]) as $malformedks
+                                    or .status.observedGeneration == null) ])
+            as $malformedks
           | ([ $activehrs[] | select((conditions(.; "Ready") | length) != 1
+                                     or (conditions_valid(.) | not)
                                      or .metadata.generation == null
-                                     or .status.observedGeneration == null) ]) as $malformedhrs
+                                     or .status.observedGeneration == null) ])
+            as $malformedhrs
           | ([ $allhrs[] as $hr
-               | ($p.helm_releases | map(select(.namespace == $hr.metadata.namespace and .name == $hr.metadata.name)) | length) as $n
+               | ($p.helm_releases
+                  | map(select(.namespace == $hr.metadata.namespace and
+                              .name == $hr.metadata.name))
+                  | length) as $n
                | select($n != 1) ]) as $setmismatch
           | ([ $allks[] as $ks
-               | ($p.kustomizations | map(select(.namespace == $ks.metadata.namespace and .name == $ks.metadata.name)) | length) as $n
+               | ($p.kustomizations
+                  | map(select(.namespace == $ks.metadata.namespace and
+                              .name == $ks.metadata.name))
+                  | length) as $n
                | select($n != 1) ]) as $ksmismatch
           | ([ $roots[] | select(.suspended == true or (ready(.) | not)
-                                  or .status.lastAttemptedRevision != ("main@sha1:" + $t)
-                                  or .status.lastAppliedRevision != ("main@sha1:" + $t)) ]) as $badroots
+                                  or .status.lastAttemptedRevision !=
+                                     ("main@sha1:" + $t)
+                                  or .status.lastAppliedRevision !=
+                                     ("main@sha1:" + $t)) ]) as $badroots
           | ((($p.sample_valid == true)
               and ($p.superseded != true) and ($t | test("^[0-9a-f]{40}$"))
               and ($git != null)
@@ -244,6 +363,9 @@ jobs:
               and ($missingks | length) == 0
               and ($badhrs | length) == 0
               and ($badowners | length) == 0
+              and ($inventorymissing | length) == 0
+              and ($inventoryduplicates | length) == 0
+              and ($inventoryorphans | length) == 0
               and ($badhrhealth | length) == 0
               and ($badkshealth | length) == 0
               and ($badroots | length) == 0
@@ -265,24 +387,73 @@ jobs:
               and ($setmismatch | length) == 0
               and ($ksmismatch | length) == 0
               and ($badowners | length) == 0
+              and ($inventorymissing | length) == 0
+              and ($inventoryduplicates | length) == 0
+              and ($inventoryorphans | length) == 0
               and ($mixed | length) == 0
+              and ($missinghrs | length) == 0
+              and ($missingks | length) == 0
+              and ($setmismatch | length) == 0
+              and ($ksmismatch | length) == 0
               and ($badroots | length) == 0)) as $samplevalid
-          | ([ $p.diagnostics[]? | {kind, namespace, name, code, reason} ]) as $diagnostics
-          | ([ $badowners[] | {kind:"HelmRelease", namespace:.metadata.namespace, name:.metadata.name,
-                                code:"owner-inventory-invalid", reason:"owner-inventory-invalid"} ]) as $ownerdiags
-          | ([ $mixed[] | {kind:"Kustomization", namespace:.metadata.namespace, name:.metadata.name,
-                            code:"revision-not-target", reason:"revision-not-target"} ]) as $revisiondiags
-          | ([ $badhrhealth[] | {kind:"HelmRelease", namespace:.metadata.namespace, name:.metadata.name,
-                                  code:"helm-attempt-not-settled", reason:"helm-attempt-not-settled"} ]) as $hrdiags
-          | ([ $badkshealth[] | {kind:"Kustomization", namespace:.metadata.namespace, name:.metadata.name,
-                                  code:"kustomization-not-settled-at-target", reason:"kustomization-not-settled-at-target"} ]) as $ksdiags
-          | ([ $unsupportedhrs[] | {kind:"HelmRelease", namespace, name, code:.reason_code, reason:.reason_code} ]) as $unsupporteddiags
-          | ([ $unsupportedks[] | {kind:"Kustomization", namespace, name, code:.reason_code, reason:.reason_code} ]) as $unsupportedksdiags
-          | ([ $missinghrs[] | {kind:"HelmRelease", namespace, name, code:"desired-helmrelease-not-live", reason:"desired-helmrelease-not-live"} ]) as $missinghrdiags
-          | ([ $missingks[] | {kind:"Kustomization", namespace, name, code:"desired-kustomization-not-live", reason:"desired-kustomization-not-live"} ]) as $missingksdiags
-          | ($diagnostics + $ownerdiags + $revisiondiags + $hrdiags + $ksdiags + $unsupporteddiags + $unsupportedksdiags + $missinghrdiags + $missingksdiags) as $all_diag
+          | ([ $p.diagnostics[]?
+               | {kind, namespace, name, code, reason} ]) as $diagnostics
+          | ([ $badowners[]
+               | {kind:"HelmRelease", namespace:.metadata.namespace,
+                  name:.metadata.name, code:"owner-inventory-invalid",
+                  reason:"owner-inventory-invalid"} ]) as $ownerdiags
+          | ([ $mixed[]
+               | {kind:"Kustomization", namespace:.metadata.namespace,
+                  name:.metadata.name, code:"revision-not-target",
+                  reason:"revision-not-target"} ]) as $revisiondiags
+          | ([ $badhrhealth[]
+               | {kind:"HelmRelease", namespace:.metadata.namespace,
+                  name:.metadata.name, code:"helm-attempt-not-settled",
+                  reason:"helm-attempt-not-settled"} ]) as $hrdiags
+          | ([ $badkshealth[]
+               | {kind:"Kustomization", namespace:.metadata.namespace,
+                  name:.metadata.name,
+                  code:"kustomization-not-settled-at-target",
+                  reason:"kustomization-not-settled-at-target"} ]) as $ksdiags
+          | ([ $unsupportedhrs[]
+               | {kind:"HelmRelease", namespace, name,
+                  code:.reason_code,
+                  reason:.reason_code} ]) as $unsupporteddiags
+          | ([ $unsupportedks[]
+               | {kind:"Kustomization", namespace, name,
+                  code:.reason_code,
+                  reason:.reason_code} ]) as $unsupportedksdiags
+          | ([ $missinghrs[]
+               | {kind:"HelmRelease", namespace, name,
+                  code:"desired-helmrelease-not-live",
+                  reason:"desired-helmrelease-not-live"} ]) as $missinghrdiags
+          | ([ $missingks[]
+               | {kind:"Kustomization", namespace, name,
+                  code:"desired-kustomization-not-live",
+                  reason:"desired-kustomization-not-live"} ]) as $missingksdiags
+          | ([ $inventorymissing[]
+               | {kind:"HelmRelease", namespace:.metadata.namespace,
+                  name:.metadata.name,
+                  code:"inventory-closure-invalid",
+                  reason:"inventory-closure-invalid"} ])
+            as $inventorymissingdiags
+          | ([ $inventoryduplicates[]
+               | {kind:"Kustomization", namespace:.metadata.namespace,
+                  name:.metadata.name,
+                  code:"inventory-duplicate",
+                  reason:"inventory-duplicate"} ])
+            as $inventoryduplicatediags
+          | ([ $inventoryorphans[]
+               | {kind:"Kustomization", namespace:.ks.metadata.namespace,
+                  name:.ks.metadata.name, code:"inventory-orphan",
+                  reason:"inventory-orphan"} ]) as $inventoryorphandiags
+          | ($diagnostics + $ownerdiags + $revisiondiags + $hrdiags + $ksdiags +
+             $unsupporteddiags + $unsupportedksdiags + $missinghrdiags +
+             $missingksdiags + $inventorymissingdiags +
+             $inventoryduplicatediags + $inventoryorphandiags) as $all_diag
           | {all_ready:$allready, stalled_or_failed:[],
-             diagnostics:($all_diag | unique_by([.kind,.namespace,.name,.code])),
+             diagnostics:($all_diag
+                          | unique_by([.kind,.namespace,.name,.code])),
              sample_valid:$samplevalid, superseded:($p.superseded == true)}
           JQ_CLASSIFY_EOF
           )
@@ -298,7 +469,11 @@ jobs:
           chmod 700 "$PARENT_ROOT"
           PRIVATE="$RUNNER_TEMP/health-gate-private"
           install -d -m 700 "$PRIVATE"
-          trap 'git worktree remove --force "$PARENT_ROOT" >/dev/null 2>&1 || true; rm -rf "$PRIVATE"' EXIT
+          cleanup() {
+            git worktree remove --force "$PARENT_ROOT" >/dev/null 2>&1 || true
+            rm -rf "$PRIVATE"
+          }
+          trap cleanup EXIT
 
           if [ -z "$WINDOW_SECONDS" ]; then WINDOW_SECONDS=900; fi
           DEADLINE=$(( $(date +%s) + WINDOW_SECONDS ))
@@ -311,12 +486,30 @@ jobs:
           collect_snapshot() {
             destination="$1"
             install -d -m 700 "$destination"
-            kubectl get kustomizations.kustomize.toolkit.fluxcd.io -A --chunk-size=500 -o json > "$destination/kustomizations.json" 2>"$PRIVATE/kubectl.err" || return 1
-            kubectl get helmreleases.helm.toolkit.fluxcd.io -A --chunk-size=500 -o json > "$destination/helmreleases.json" 2>"$PRIVATE/kubectl.err" || return 1
-            kubectl get gitrepositories.source.toolkit.fluxcd.io -A --chunk-size=500 -o json > "$destination/gitrepositories.json" 2>"$PRIVATE/kubectl.err" || return 1
-            kubectl get ocirepositories.source.toolkit.fluxcd.io -A --chunk-size=500 -o json > "$destination/ocirepositories.json" 2>"$PRIVATE/kubectl.err" || return 1
-            kubectl get helmrepositories.source.toolkit.fluxcd.io -A --chunk-size=500 -o json > "$destination/helmrepositories.json" 2>"$PRIVATE/kubectl.err" || return 1
-            kubectl get helmcharts.source.toolkit.fluxcd.io -A --chunk-size=500 -o json > "$destination/helmcharts.json" 2>"$PRIVATE/kubectl.err" || return 1
+            kubectl get kustomizations.kustomize.toolkit.fluxcd.io \
+              -A --chunk-size=500 -o json \
+              > "$destination/kustomizations.json" \
+              2>"$PRIVATE/kubectl.err" || return 1
+            kubectl get helmreleases.helm.toolkit.fluxcd.io \
+              -A --chunk-size=500 -o json \
+              > "$destination/helmreleases.json" \
+              2>"$PRIVATE/kubectl.err" || return 1
+            kubectl get gitrepositories.source.toolkit.fluxcd.io \
+              -A --chunk-size=500 -o json \
+              > "$destination/gitrepositories.json" \
+              2>"$PRIVATE/kubectl.err" || return 1
+            kubectl get ocirepositories.source.toolkit.fluxcd.io \
+              -A --chunk-size=500 -o json \
+              > "$destination/ocirepositories.json" \
+              2>"$PRIVATE/kubectl.err" || return 1
+            kubectl get helmrepositories.source.toolkit.fluxcd.io \
+              -A --chunk-size=500 -o json \
+              > "$destination/helmrepositories.json" \
+              2>"$PRIVATE/kubectl.err" || return 1
+            kubectl get helmcharts.source.toolkit.fluxcd.io \
+              -A --chunk-size=500 -o json \
+              > "$destination/helmcharts.json" \
+              2>"$PRIVATE/kubectl.err" || return 1
           }
 
           snapshot_json() {
@@ -326,7 +519,8 @@ jobs:
             main_before="$4"
             main_after="$5"
             main_superseded="$6"
-            python3 - "$before_dir" "$after_dir" "$output" "$main_before" "$main_after" "$main_superseded" <<'PYTHON'
+            python3 - "$before_dir" "$after_dir" "$output" \
+              "$main_before" "$main_after" "$main_superseded" <<'PYTHON'
           import json
           import pathlib
           import sys
@@ -335,18 +529,25 @@ jobs:
           result = {}
           for phase, root in (("before", before), ("after", after)):
               result[phase] = {}
-              for name in ("kustomizations", "helmreleases", "gitrepositories", "ocirepositories", "helmrepositories", "helmcharts"):
-                  result[phase][name] = json.loads((root / (name + ".json")).read_text())
+              for name in ("kustomizations", "helmreleases", "gitrepositories",
+                           "ocirepositories", "helmrepositories", "helmcharts"):
+                  result[phase][name] = json.loads(
+                      (root / (name + ".json")).read_text()
+                  )
           result["main_before"] = sys.argv[4]
           result["main_after"] = sys.argv[5]
           result["superseded"] = sys.argv[6] == "true"
-          pathlib.Path(sys.argv[3]).write_text(json.dumps(result, separators=(",", ":")))
+          pathlib.Path(sys.argv[3]).write_text(
+              json.dumps(result, separators=(",", ":"))
+          )
           PYTHON
             chmod 600 "$output"
           }
 
           while [ "$(date +%s)" -lt "$DEADLINE" ]; do
-            if ! MAIN_BEFORE=$(gh api "repos/$GITHUB_REPOSITORY/branches/main" --jq '.commit.sha' 2>"$PRIVATE/gh.err"); then
+            if ! MAIN_BEFORE=$(gh api \
+              "repos/$GITHUB_REPOSITORY/branches/main" \
+              --jq '.commit.sha' 2>"$PRIVATE/gh.err"); then
               echo "WARNING: authenticated main read failed; retrying"
               sleep "$POLL_INTERVAL_SECONDS"
               continue
@@ -369,64 +570,86 @@ jobs:
             BEFORE_DIR="$PRIVATE/before"
             AFTER_DIR="$PRIVATE/after"
             if ! collect_snapshot "$BEFORE_DIR"; then
-              echo "WARNING: complete pre-render Kubernetes snapshot failed; retrying"
+              echo "WARNING: pre-render Kubernetes snapshot failed; retrying"
               sleep "$POLL_INTERVAL_SECONDS"
               continue
             fi
-            if ! snapshot_json "$BEFORE_DIR" "$BEFORE_DIR" "$PRIVATE/pre-render-snapshots.json" "$MAIN_BEFORE" "" false; then
+            if ! snapshot_json "$BEFORE_DIR" "$BEFORE_DIR" \
+              "$PRIVATE/pre-render-snapshots.json" "$MAIN_BEFORE" "" false; then
               echo "WARNING: pre-render snapshot JSON was malformed; retrying"
               sleep "$POLL_INTERVAL_SECONDS"
               continue
             fi
-            if ! python3 scripts/health-gate-attest.py --target-sha "$TARGET_SHA" --parent-sha "$PARENT_SHA" --snapshots "$PRIVATE/pre-render-snapshots.json" --repo-root "$GITHUB_WORKSPACE" --parent-root "$PARENT_ROOT" > "$PRIVATE/prepared-proof.json"; then
+            if ! python3 scripts/health-gate-attest.py \
+              --target-sha "$TARGET_SHA" --parent-sha "$PARENT_SHA" \
+              --snapshots "$PRIVATE/pre-render-snapshots.json" \
+              --repo-root "$GITHUB_WORKSPACE" --parent-root "$PARENT_ROOT" \
+              > "$PRIVATE/prepared-proof.json"; then
               echo "WARNING: pre-render attestation execution failed; retrying"
               sleep "$POLL_INTERVAL_SECONDS"
               continue
             fi
 
             if ! collect_snapshot "$AFTER_DIR"; then
-              echo "WARNING: complete post-render Kubernetes snapshot failed; retrying"
+              echo "WARNING: post-render Kubernetes snapshot failed; retrying"
               sleep "$POLL_INTERVAL_SECONDS"
               continue
             fi
-            if ! MAIN_AFTER=$(gh api "repos/$GITHUB_REPOSITORY/branches/main" --jq '.commit.sha' 2>"$PRIVATE/gh.err"); then
-              echo "WARNING: authenticated closing main read failed; sample discarded"
+            if ! MAIN_AFTER=$(gh api \
+              "repos/$GITHUB_REPOSITORY/branches/main" \
+              --jq '.commit.sha' 2>"$PRIVATE/gh.err"); then
+              echo "WARNING: closing main read failed; sample discarded"
               sleep "$POLL_INTERVAL_SECONDS"
               continue
             fi
             if [ "$MAIN_AFTER" != "$TARGET_SHA" ]; then
               EXTRA_SUPERSEDED=true
             fi
-            if ! snapshot_json "$BEFORE_DIR" "$AFTER_DIR" "$PRIVATE/sample.json" "$MAIN_BEFORE" "$MAIN_AFTER" "$EXTRA_SUPERSEDED"; then
+            if ! snapshot_json "$BEFORE_DIR" "$AFTER_DIR" \
+              "$PRIVATE/sample.json" "$MAIN_BEFORE" "$MAIN_AFTER" \
+              "$EXTRA_SUPERSEDED"; then
               echo "WARNING: sampled snapshot JSON was malformed; retrying"
               sleep "$POLL_INTERVAL_SECONDS"
               continue
             fi
-            if ! python3 scripts/health-gate-attest.py --target-sha "$TARGET_SHA" --parent-sha "$PARENT_SHA" --snapshots "$PRIVATE/sample.json" --repo-root "$GITHUB_WORKSPACE" --parent-root "$PARENT_ROOT" > "$PRIVATE/proof.json"; then
+            if ! python3 scripts/health-gate-attest.py \
+              --target-sha "$TARGET_SHA" --parent-sha "$PARENT_SHA" \
+              --snapshots "$PRIVATE/sample.json" \
+              --repo-root "$GITHUB_WORKSPACE" --parent-root "$PARENT_ROOT" \
+              > "$PRIVATE/proof.json"; then
               echo "WARNING: attestation execution failed; retrying"
               sleep "$POLL_INTERVAL_SECONDS"
               continue
             fi
-            LATEST_ATTESTATION_COUNTS=$(jq -c '{total:.counts.helmreleases_total,supported:.counts.helmreleases_supported,unsupported:.counts.helmreleases_unsupported,reason_codes:.counts.reason_codes}' "$PRIVATE/proof.json")
-            if ! cmp -s <(jq -S '{target_sha,parent_sha,kustomizations,helm_releases}' "$PRIVATE/prepared-proof.json") <(jq -S '{target_sha,parent_sha,kustomizations,helm_releases}' "$PRIVATE/proof.json"); then
-              echo "WARNING: target and parent render inputs changed during the sample; discarding"
+            LATEST_ATTESTATION_COUNTS=$(jq -c \
+              '{total:.counts.helmreleases_total,
+               supported:.counts.helmreleases_supported,
+               unsupported:.counts.helmreleases_unsupported,
+               reason_codes:.counts.reason_codes}' "$PRIVATE/proof.json")
+            if ! cmp -s \
+              <(jq -S '{target_sha,parent_sha,kustomizations,helm_releases}' \
+                "$PRIVATE/prepared-proof.json") \
+              <(jq -S '{target_sha,parent_sha,kustomizations,helm_releases}' \
+                "$PRIVATE/proof.json"); then
+              echo "WARNING: render inputs changed during sample; discarding"
               sleep "$POLL_INTERVAL_SECONDS"
               continue
             fi
-            if ! LAST_RESULT=$(jq -c --argjson superseded "$EXTRA_SUPERSEDED" '.superseded = (.superseded or $superseded) | '"$JQ_CLASSIFY" "$PRIVATE/proof.json" 2>"$PRIVATE/jq.err"); then
+            if ! LAST_RESULT=$(jq -c \
+              --argjson superseded "$EXTRA_SUPERSEDED" \
+              '.superseded = (.superseded or $superseded) | '"$JQ_CLASSIFY" \
+              "$PRIVATE/proof.json" 2>"$PRIVATE/jq.err"); then
               echo "WARNING: sanitized proof could not be classified; retrying"
               sleep "$POLL_INTERVAL_SECONDS"
               continue
             fi
-            if [ "$(printf '%s' "$LAST_RESULT" | jq -r '.superseded')" = "true" ]; then
+            SUPERSEDED=$(printf '%s' "$LAST_RESULT" | jq -r '.superseded')
+            if [ "$SUPERSEDED" = "true" ]; then
               OUTCOME="inconclusive"
               break
             fi
-            if [ "$(printf '%s' "$LAST_RESULT" | jq -r '.diagnostics | map(.code) | any(. == \"baseline-missing\" or . == \"merge-cas-unavailable\")')" = "true" ]; then
-              OUTCOME="inconclusive"
-              break
-            fi
-            if [ "$(printf '%s' "$LAST_RESULT" | jq -r '.all_ready')" = "true" ]; then
+            ALL_READY=$(printf '%s' "$LAST_RESULT" | jq -r '.all_ready')
+            if [ "$ALL_READY" = "true" ]; then
               OUTCOME="healthy"
               break
             fi
@@ -442,9 +665,15 @@ jobs:
           fi
           echo "HelmRelease attestation counts: $LATEST_ATTESTATION_COUNTS"
           REVERT_BUCKETS=$(git diff --name-only "$PARENT_SHA" "$TARGET_SHA" \
-            | awk -F/ '$1 == "kubernetes" && $2 == "apps" && NF >= 4 {print $3 "/" $4}' \
+            | awk -F/ '
+              $1 == "kubernetes" && $2 == "apps" && NF >= 4 {
+                print $3 "/" $4
+              }
+            ' \
             | sort -u | jq -R . | jq -sc .)
-          if [ "$REVERT_BUCKETS" = "[]" ]; then REVERT_BUCKETS='["unscoped"]'; fi
+          if [ "$REVERT_BUCKETS" = "[]" ]; then
+            REVERT_BUCKETS='["unscoped"]'
+          fi
           {
             echo "all_ready=$ALL_READY"
             echo "outcome=$OUTCOME"
@@ -461,7 +690,8 @@ jobs:
           {
             echo "### Desired-input attestation"
             echo ""
-            echo "HelmRelease counts and unsupported reason codes: \`$LATEST_ATTESTATION_COUNTS\`."
+            echo "HelmRelease counts and unsupported reason codes:"
+            echo "\`$LATEST_ATTESTATION_COUNTS\`."
           } >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
 
       - name: Emit inconclusive notification
@@ -471,8 +701,11 @@ jobs:
           RESULT: ${{ steps.poll.outputs.diagnostics }}
         run: |
           set -euo pipefail
-          CODES=$(printf '%s' "$RESULT" | jq -r '[.diagnostics[]?.code] | unique | join(", ")')
-          DETAIL="Health gate could not prove target $GITHUB_SHA; reasons: ${CODES:-no-sample}. The run is inconclusive and will not trigger a rollback."
+          CODES=$(printf '%s' "$RESULT" | jq -r \
+            '[.diagnostics[]?.code] | unique | join(", ")')
+          DETAIL="Health gate could not prove target $GITHUB_SHA;"
+          DETAIL="$DETAIL reasons: ${CODES:-no-sample}."
+          DETAIL="$DETAIL The run is inconclusive; rollback is not triggered."
           NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
           kubectl create -f - <<EOF
           apiVersion: v1
@@ -498,7 +731,8 @@ jobs:
       - name: Exchange revert-bot App token for an authorized revert
         id: app-token
         if: steps.poll.outputs.rollback_authorized == 'true'
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        uses: >-
+          actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
         with:
           app-id: ${{ secrets.REVERT_BOT_APP_ID }}
           private-key: ${{ secrets.REVERT_BOT_APP_PRIVATE_KEY }}
@@ -514,20 +748,26 @@ jobs:
           REVERT_BUCKETS: ${{ steps.poll.outputs.revert_buckets }}
         run: |
           set -euo pipefail
-          CURRENT_MAIN=$(gh api "repos/$GITHUB_REPOSITORY/branches/main" --jq '.commit.sha')
+          CURRENT_MAIN=$(gh api \
+            "repos/$GITHUB_REPOSITORY/branches/main" --jq '.commit.sha')
           if [ "$CURRENT_MAIN" != "$TARGET_SHA" ]; then
-            echo "main moved before revert publication; this proposal is superseded and will not be retargeted" >&2
+            echo "main moved; proposal is superseded" >&2
+            echo "and will not be retargeted" >&2
             exit 1
           fi
           FIRST_BUCKET=$(printf '%s' "$REVERT_BUCKETS" | jq -r '.[0]')
           SLUG=$(printf '%s' "$FIRST_BUCKET" | tr '/' '-')
           BRANCH="auto-revert/${SLUG}-${TARGET_SHA:0:12}-${GITHUB_RUN_ID}"
           git config user.name "k8s-cluster-revert-bot[bot]"
-          git config user.email "k8s-cluster-revert-bot[bot]@users.noreply.github.com"
+          git config user.email \
+            "k8s-cluster-revert-bot[bot]@users.noreply.github.com"
           git switch --create "$BRANCH"
-          PARENT_COUNT=$(git cat-file -p "$TARGET_SHA" | grep -c '^parent ' || true)
+          PARENT_COUNT=$(git cat-file -p "$TARGET_SHA" \
+            | grep -c '^parent ' || true)
           REVERT_ARGS=(--no-edit)
-          if [ "$PARENT_COUNT" -gt 1 ]; then REVERT_ARGS+=(-m 1); fi
+          if [ "$PARENT_COUNT" -gt 1 ]; then
+            REVERT_ARGS+=(-m 1)
+          fi
           git revert "${REVERT_ARGS[@]}" "$TARGET_SHA"
           echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
 
@@ -543,15 +783,21 @@ jobs:
           THRESHOLD=3
           NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
           STATE_FILE="$RUNNER_TEMP/circuit-breaker-state.json"
-          git show "$TARGET_SHA:.github/health-gate/circuit-breaker-state.json" > "$STATE_FILE"
+          git show \
+            "$TARGET_SHA:.github/health-gate/circuit-breaker-state.json" \
+            > "$STATE_FILE"
           chmod 600 "$STATE_FILE"
           while IFS= read -r bucket; do
             [ -n "$bucket" ] || continue
-            jq --arg b "$bucket" --arg ts "$NOW" --argjson window "$WINDOW_SECONDS" --argjson threshold "$THRESHOLD" '
+            jq --arg b "$bucket" --arg ts "$NOW" \
+              --argjson window "$WINDOW_SECONDS" \
+              --argjson threshold "$THRESHOLD" '
               ($ts | fromdateiso8601) as $now_epoch
               | .[$b] //= {reverts: [], paused: false}
               | .[$b].reverts += [$ts]
-              | (.[$b].reverts | map(select(($now_epoch - (. | fromdateiso8601)) <= $window)) | length) as $recent_count
+              | (.[$b].reverts
+                 | map(select(($now_epoch - (. | fromdateiso8601)) <= $window))
+                 | length) as $recent_count
               | .[$b].paused = ($recent_count >= $threshold)
             ' "$STATE_FILE" > "$STATE_FILE.new"
             mv "$STATE_FILE.new" "$STATE_FILE"
@@ -575,18 +821,24 @@ jobs:
           gh auth setup-git
           git push origin "$BRANCH"
           BUCKET_LIST=$(printf '%s' "$REVERT_BUCKETS" | jq -r 'join(", ")')
+          TITLE="Auto-revert: $BUCKET_LIST unhealthy after"
+          TITLE="$TITLE ${TARGET_SHA:0:7}"
+          BODY="Health-gate evidence authorized a revert of $TARGET_SHA."
+          BODY="$BODY The breaker charge is committed in this proposal."
+          BODY="$BODY It takes effect only if the revert PR lands."
           PR_URL=$(gh pr create \
             --base main \
             --head "$BRANCH" \
-            --title "Auto-revert: $BUCKET_LIST unhealthy after ${TARGET_SHA:0:7}" \
+            --title "$TITLE" \
             --label automated-revert \
-            --body "Health-gate evidence authorized a revert of $TARGET_SHA. The breaker charge is committed in this proposal and will take effect only if this revert PR lands.")
+            --body "$BODY")
           echo "pr_url=$PR_URL" >> "$GITHUB_OUTPUT"
           echo "pr_number=${PR_URL##*/}" >> "$GITHUB_OUTPUT"
 
       - name: Verify D-03 revert PR provenance
         id: revert-provenance
-        if: steps.poll.outputs.rollback_authorized == 'true' && steps.revert-pr.outputs.pr_number != ''
+        if: steps.poll.outputs.rollback_authorized == 'true' &&
+            steps.revert-pr.outputs.pr_number != ''
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           REVERT_PR: ${{ steps.revert-pr.outputs.pr_number }}
@@ -596,9 +848,11 @@ jobs:
           set -euo pipefail
           test -n "$REVERT_PR"
           test -n "$EXPECTED_BOT"
-          PR_JSON=$(gh pr view "$REVERT_PR" --json author,baseRefName,headRefName,title,labels)
+          PR_JSON=$(gh pr view "$REVERT_PR" \
+            --json author,baseRefName,headRefName,title,labels)
           jq -e --arg bot "$EXPECTED_BOT" --arg sha "$TARGET_SHA" '
-            .author.login == $bot and .author.type == "Bot" and .baseRefName == "main" and
+            .author.login == $bot and .author.type == "Bot" and
+            .baseRefName == "main" and
             (.headRefName | startswith("auto-revert/")) and
             (.headRefName | contains($sha[0:12])) and
             (.title | startswith("Auto-revert:")) and
@@ -613,7 +867,9 @@ jobs:
           POLL_OUTCOME: ${{ steps.poll.outputs.outcome }}
         run: |
           set -uo pipefail
-          DETAIL="Health gate failed before reaching a verdict for $GITHUB_SHA; last poll outcome: ${POLL_OUTCOME:-none}. No rollback was authorized."
+          DETAIL="Health gate failed before reaching a verdict for $GITHUB_SHA;"
+          DETAIL="$DETAIL last poll outcome: ${POLL_OUTCOME:-none}."
+          DETAIL="$DETAIL No rollback was authorized."
           echo "::error title=Health gate did not reach a verdict::$DETAIL"
           {
             echo "### Health gate did not reach a verdict"

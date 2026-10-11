@@ -56,22 +56,59 @@ jobs:
               test "$answer" = "yes"
             done
           done
-          kubectl get kustomizations.kustomize.toolkit.fluxcd.io -A -o name >/dev/null
-          kubectl get helmreleases.helm.toolkit.fluxcd.io -A -o name >/dev/null
+          kubectl get kustomizations.kustomize.toolkit.fluxcd.io \
+            -A -o name >/dev/null
+          kubectl get helmreleases.helm.toolkit.fluxcd.io \
+            -A -o name >/dev/null
 
       - name: Verify Secret and ConfigMap reads are denied
         run: |
           set -euo pipefail
+          expect_denied() {
+            local verb="$1"
+            local resource="$2"
+            local answer status
+            answer=
+            if answer=$(kubectl auth can-i \
+              "$verb" "$resource" --all-namespaces); then
+              status=0
+            else
+              status=$?
+            fi
+            if [ "$status" -gt 1 ] || [ "$answer" != "no" ]; then
+              printf '%s %s %s %s (status=%s answer=%s)\n' \
+                expected 'denied permission:' "$verb" "$resource" \
+                "$status" "$answer" >&2
+              return 1
+            fi
+          }
           for resource in secrets configmaps; do
             for verb in get list watch; do
-              answer=$(kubectl auth can-i "$verb" "$resource" --all-namespaces)
-              test "$answer" = "no"
+              expect_denied "$verb" "$resource"
             done
           done
 
       - name: Verify source and Flux resource mutations are denied
         run: |
           set -euo pipefail
+          expect_denied() {
+            local verb="$1"
+            local resource="$2"
+            local answer status
+            answer=
+            if answer=$(kubectl auth can-i \
+              "$verb" "$resource" --all-namespaces); then
+              status=0
+            else
+              status=$?
+            fi
+            if [ "$status" -gt 1 ] || [ "$answer" != "no" ]; then
+              printf '%s %s %s %s (status=%s answer=%s)\n' \
+                expected 'denied permission:' "$verb" "$resource" \
+                "$status" "$answer" >&2
+              return 1
+            fi
+          }
           for resource in \
             kustomizations.kustomize.toolkit.fluxcd.io \
             helmreleases.helm.toolkit.fluxcd.io \
@@ -80,7 +117,6 @@ jobs:
             helmrepositories.source.toolkit.fluxcd.io \
             helmcharts.source.toolkit.fluxcd.io; do
             for verb in create update patch delete; do
-              answer=$(kubectl auth can-i "$verb" "$resource" --all-namespaces)
-              test "$answer" = "no"
+              expect_denied "$verb" "$resource"
             done
           done

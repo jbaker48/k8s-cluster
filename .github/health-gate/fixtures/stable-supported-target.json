@@ -155,7 +155,8 @@
                 "chartVersion": "1.2.3",
                 "configDigest": "cfg-current",
                 "status": "deployed",
-                "version": 4
+                "version": 4,
+                "ociDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
               }
             ],
             "lastAttemptedConfigDigest": "cfg-current",

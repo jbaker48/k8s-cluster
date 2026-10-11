@@ -51,14 +51,33 @@ run_local_render_fixture() {
   target_sha=$(git -C "$ROOT" rev-parse HEAD)
   parent_sha=$(git -C "$ROOT" rev-parse "$target_sha^")
   git -C "$ROOT" worktree add --detach "$TMP_DIR/local-parent" "$parent_sha" >/dev/null 2>&1
-  python3 - "$TMP_DIR/local-snapshot.json" "$target_sha" <<'PYTHON'
+python3 - "$TMP_DIR/local-snapshot.json" "$target_sha" <<'PYTHON'
 import json
 import pathlib
 import sys
 names = ("kustomizations", "helmreleases", "gitrepositories", "ocirepositories", "helmrepositories", "helmcharts")
 empty = {name: {"apiVersion": "v1", "kind": "List", "items": []} for name in names}
+release = {
+    "apiVersion": "helm.toolkit.fluxcd.io/v2",
+    "kind": "HelmRelease",
+    "metadata": {
+        "generation": 1,
+        "labels": {
+            "kustomize.toolkit.fluxcd.io/name": "dragonfly",
+            "kustomize.toolkit.fluxcd.io/namespace": "flux-system",
+        },
+        "name": "dragonfly-operator",
+        "namespace": "database",
+        "resourceVersion": "fixture-rv",
+        "uid": "fixture-uid",
+    },
+    "spec": {"chartRef": {"kind": "OCIRepository", "name": "dragonfly"}},
+    "status": {},
+}
+snapshot = json.loads(json.dumps(empty))
+snapshot["helmreleases"]["items"] = [release]
 pathlib.Path(sys.argv[1]).write_text(json.dumps({
-    "before": empty, "after": empty, "main_before": sys.argv[2],
+    "before": snapshot, "after": snapshot, "main_before": sys.argv[2],
     "main_after": sys.argv[2], "superseded": False,
 }, separators=(",", ":")))
 PYTHON
@@ -69,8 +88,15 @@ PYTHON
     --repo-root "$ROOT" \
     --parent-root "$TMP_DIR/local-parent" > "$proof_file"
   jq -e '
-    any(.diagnostics[]?; .kind == "Kustomization" and .name == "dragonfly" and .code == "remote-build-dependency")
-    and all(.helm_releases[]?; .reason_code != "supported")
+    any(.diagnostics[]?;
+      .kind == "Kustomization" and .namespace == "flux-system"
+      and .name == "dragonfly" and .code == "remote-build-dependency")
+    and ([.helm_releases[]?
+          | select(.owner.namespace == "flux-system" and .owner.name == "dragonfly")] as $owned
+        | ($owned | length) == 1
+          and $owned[0].name == "dragonfly-operator"
+          and $owned[0].supported == false
+          and $owned[0].reason_code == "remote-build-dependency")
   ' "$proof_file" >/dev/null || {
     printf 'local Flux render did not isolate dragonfly remote dependency: %s\n' "${fixture##*/}" >&2
     return 1
@@ -153,6 +179,12 @@ required=(
   main-moves-before-revert-publication-or-merge
   cas-unavailable-with-otherwise-complete-evidence
   remote-build-dependency-owner
+  render-preflight
+  newest-history-failed
+  newest-history-wrong-chart
+  newest-history-wrong-digest
+  inventory-orphan
+  unknown-reconciling-condition
 )
 
 fixture_count=0
@@ -173,6 +205,27 @@ for name in "${required[@]}"; do
 done
 
 passed=0
+materialize_fixture() {
+  local fixture=$1
+  local destination=$2
+  local base_name
+  base_name=$(jq -r '.base_fixture // empty' "$fixture")
+  if [ -z "$base_name" ]; then
+    cp -f "$fixture" "$destination"
+    return
+  fi
+  jq -n \
+    --slurpfile base "$FIXTURE_DIR/$base_name.json" \
+    --slurpfile variant "$fixture" '
+      ($base[0] * $variant[0]) as $merged
+      | $merged
+      | .proof = ($base[0].proof
+          | reduce ($variant[0].proof_mutations // [])[] as $mutation
+              (. ; setpath($mutation.path[1:]; $mutation.value)))
+      | del(.base_fixture, .proof_mutations)
+    ' > "$destination"
+}
+
 for fixture in "$FIXTURE_DIR"/*.json; do
   [ -f "$fixture" ] || continue
   name=$(jq -r '.name // empty' "$fixture")
@@ -181,17 +234,35 @@ for fixture in "$FIXTURE_DIR"/*.json; do
     exit 2
   }
   proof_file="$TMP_DIR/$name.proof.json"
-  if jq -e '.local_render_fixture == true' "$fixture" >/dev/null; then
-    run_local_render_fixture "$fixture" "$proof_file"
-  elif jq -e 'has("producer_input")' "$fixture" >/dev/null; then
-    jq -c '.producer_input' "$fixture" > "$TMP_DIR/$name.producer-input.json"
+  effective_fixture="$TMP_DIR/$name.fixture.json"
+  materialize_fixture "$fixture" "$effective_fixture"
+  if jq -e 'has("preflight_cases")' "$fixture" >/dev/null; then
     target_sha=$(jq -r '.target_sha' "$fixture")
     parent_sha=$(jq -r '.parent_sha' "$fixture")
     python3 "$ROOT/scripts/health-gate-attest.py" \
       --target-sha "$target_sha" \
       --parent-sha "$parent_sha" \
+      --preflight-fixture "$fixture" > "$proof_file"
+    jq -e --argjson expected "$(jq -c '.preflight_expected' "$fixture")" '
+      ([.cases[] | {name, reason_code}] | sort_by(.name)) == ($expected | sort_by(.name))
+    ' "$proof_file" >/dev/null || {
+      printf 'render preflight fixture failed: %s actual=%s expected=%s\n' \
+        "$name" "$(jq -c '.cases' "$proof_file")" "$(jq -c '.preflight_expected' "$fixture")" >&2
+      exit 1
+    }
+    passed=$((passed + 1))
+    continue
+  elif jq -e '.local_render_fixture == true' "$fixture" >/dev/null; then
+    run_local_render_fixture "$fixture" "$proof_file"
+  elif jq -e 'has("producer_input")' "$effective_fixture" >/dev/null; then
+    jq -c '.producer_input' "$effective_fixture" > "$TMP_DIR/$name.producer-input.json"
+    target_sha=$(jq -r '.target_sha' "$effective_fixture")
+    parent_sha=$(jq -r '.parent_sha' "$effective_fixture")
+    python3 "$ROOT/scripts/health-gate-attest.py" \
+      --target-sha "$target_sha" \
+      --parent-sha "$parent_sha" \
       --fixture-input "$TMP_DIR/$name.producer-input.json" > "$proof_file"
-    jq -e --argjson expected "$(jq -c '.producer_expected' "$fixture")" '
+    jq -e --argjson expected "$(jq -c '.producer_expected' "$effective_fixture")" '
       .counts.helmreleases_total == $expected.helmreleases_total
       and .counts.helmreleases_supported == $expected.helmreleases_supported
       and .counts.helmreleases_unsupported == $expected.helmreleases_unsupported
@@ -219,10 +290,10 @@ for fixture in "$FIXTURE_DIR"/*.json; do
       exit 1
     }
   else
-    jq -c '.proof' "$fixture" > "$proof_file"
+    jq -c '.proof' "$effective_fixture" > "$proof_file"
   fi
   actual=$(jq -c -f "$TMP_DIR/classifier.jq" "$proof_file")
-  jq -en --argjson actual "$actual" --argjson expected "$(jq -c '.expected' "$fixture")" '
+  jq -en --argjson actual "$actual" --argjson expected "$(jq -c '.expected' "$effective_fixture")" '
     $actual.all_ready == $expected.all_ready
     and $actual.sample_valid == $expected.sample_valid
     and $actual.superseded == $expected.superseded
@@ -233,7 +304,7 @@ for fixture in "$FIXTURE_DIR"/*.json; do
     printf 'classifier fixture failed: %s actual=%s expected=%s\n' \
       "$name" \
       "$(printf '%s' "$actual" | jq -c '{all_ready,sample_valid,superseded,stalled_or_failed,diagnostic_codes:[.diagnostics[]?.code] | unique}')" \
-      "$(jq -c '.expected' "$fixture")" >&2
+      "$(jq -c '.expected' "$effective_fixture")" >&2
     exit 1
   }
   passed=$((passed + 1))

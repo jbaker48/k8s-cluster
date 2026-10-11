@@ -35,8 +35,12 @@ SEMVER = re.compile(
     r"(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?"
     r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$"
 )
-REMOTE = re.compile(r"^https?://", re.IGNORECASE)
-UNRESOLVED_SUBSTITUTION = re.compile(r"\$\{[^}]+\}")
+REMOTE = re.compile(
+    r"^(?:[a-z][a-z0-9+.-]*://|git::|git@|(?:github|gitlab|bitbucket)\.com[:/])",
+    re.IGNORECASE,
+)
+UNRESOLVED_SUBSTITUTION = re.compile(r"\$\{([^}]+)\}")
+SUBSTITUTION_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 HR_SPEC_FIELDS = {
     "chartRef", "chart", "interval", "releaseName", "targetNamespace", "storageNamespace",
     "dependsOn", "serviceAccountName", "persistentClient", "suspend", "timeout",
@@ -74,7 +78,7 @@ def command(argv: list[str], cwd: Path | None = None, input_text: str | None = N
     return result.stdout
 
 
-def json_documents(text: str) -> list[dict[str, Any]]:
+def json_values(text: str) -> list[dict[str, Any]]:
     decoder = json.JSONDecoder()
     documents = []
     offset = 0
@@ -84,9 +88,13 @@ def json_documents(text: str) -> list[dict[str, Any]]:
         if offset == len(text):
             break
         value, offset = decoder.raw_decode(text, offset)
-        if isinstance(value, dict) and value.get("kind"):
+        if isinstance(value, dict):
             documents.append(value)
     return documents
+
+
+def json_documents(text: str) -> list[dict[str, Any]]:
+    return [document for document in json_values(text) if document.get("kind")]
 
 
 def yaml_documents(text: str) -> list[dict[str, Any]]:
@@ -94,7 +102,7 @@ def yaml_documents(text: str) -> list[dict[str, Any]]:
 
 
 def file_documents(path: Path) -> list[dict[str, Any]]:
-    return json_documents(command(["yq", "-o=json", "-I=0", ".", str(path)]))
+    return json_values(command(["yq", "-o=json", "-I=0", ".", str(path)]))
 
 
 def tool_versions() -> dict[str, str]:
@@ -214,7 +222,10 @@ def safe_observation(collection: str, value: dict[str, Any]) -> dict[str, Any]:
             history.append(
                 {
                     field: release[field]
-                    for field in ("version", "status", "configDigest", "chartVersion", "lastDeployed")
+                    for field in (
+                        "version", "status", "configDigest", "chartVersion",
+                        "ociDigest", "lastDeployed",
+                    )
                     if isinstance(release.get(field), (str, int, float, bool))
                 }
             )
@@ -364,9 +375,96 @@ def sanitized_observations(live: dict[str, list[dict[str, Any]]]) -> dict[str, l
     }
 
 
-def local_graph_error(directory: Path) -> str | None:
-    root = directory.resolve()
-    queue = [root]
+def _reference_list(spec: dict[str, Any], field: str) -> list[str]:
+    value = spec.get(field, [])
+    if value is None:
+        return []
+    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+        raise Invalid("render-unsupported")
+    return value
+
+
+def _generator_references(spec: dict[str, Any], field: str) -> list[str]:
+    generators = spec.get(field, [])
+    if generators is None:
+        return []
+    if not isinstance(generators, list):
+        raise Invalid("render-unsupported")
+    refs = []
+    for generator in generators:
+        if not isinstance(generator, dict):
+            raise Invalid("render-unsupported")
+        for key in ("files", "envs"):
+            values = generator.get(key, [])
+            if values is None:
+                continue
+            if not isinstance(values, list) or any(not isinstance(item, str) for item in values):
+                raise Invalid("render-unsupported")
+            refs.extend(value.split("=", 1)[-1] for value in values)
+    return refs
+
+
+def _kustomization_references(spec: dict[str, Any]) -> list[str]:
+    if any(spec.get(field) for field in ("helmCharts", "generators", "transformers")):
+        raise Invalid("remote-build-dependency")
+    refs = []
+    for field in (
+        "resources", "components", "bases", "patchesStrategicMerge",
+        "crds", "configurations",
+    ):
+        refs.extend(_reference_list(spec, field))
+    json_patches = spec.get("patchesJson6902", [])
+    if json_patches is None:
+        json_patches = []
+    if not isinstance(json_patches, list):
+        raise Invalid("render-unsupported")
+    for patch in json_patches:
+        if not isinstance(patch, dict) or not isinstance(patch.get("path"), str):
+            raise Invalid("render-unsupported")
+        refs.append(patch["path"])
+    patches = spec.get("patches", [])
+    if patches is None:
+        patches = []
+    if not isinstance(patches, list):
+        raise Invalid("render-unsupported")
+    for patch in patches:
+        if isinstance(patch, str):
+            refs.append(patch)
+        elif isinstance(patch, dict):
+            path = patch.get("path")
+            if path is not None:
+                if not isinstance(path, str):
+                    raise Invalid("render-unsupported")
+                refs.append(path)
+        else:
+            raise Invalid("render-unsupported")
+    openapi = spec.get("openapi") or {}
+    if not isinstance(openapi, dict):
+        raise Invalid("render-unsupported")
+    if openapi.get("path") is not None:
+        if not isinstance(openapi["path"], str):
+            raise Invalid("render-unsupported")
+        refs.append(openapi["path"])
+    refs.extend(_generator_references(spec, "configMapGenerator"))
+    refs.extend(_generator_references(spec, "secretGenerator"))
+    return refs
+
+
+def _remote_reference(reference: str) -> bool:
+    value = reference.strip()
+    return bool(
+        REMOTE.match(value)
+        or re.search(r"(?:^|/)github\.com/|(?:^|/)gitlab\.com/|(?:^|/)bitbucket\.org/", value)
+        or "?ref=" in value
+    )
+
+
+def local_graph_error(directory: Path, repository_root: Path | None = None) -> str | None:
+    root = (repository_root or directory).resolve()
+    start = directory.resolve()
+    if not start.is_relative_to(root):
+        return "render-unsupported"
+    queue = [start]
     visited: set[Path] = set()
     while queue:
         current = queue.pop()
@@ -379,7 +477,9 @@ def local_graph_error(directory: Path) -> str | None:
         visited.add(current)
         if not current.is_relative_to(root) or not current.is_dir():
             return "render-unsupported"
-        candidates = [current / name for name in ("kustomization.yaml", "kustomization.yml", "Kustomization")
+        candidates = [current / name for name in (
+            "kustomization.yaml", "kustomization.yml", "kustomization.json", "Kustomization",
+        )
                       if (current / name).is_file()]
         if not candidates:
             continue
@@ -389,19 +489,23 @@ def local_graph_error(directory: Path) -> str | None:
         if len(docs) != 1:
             return "render-unsupported"
         spec = docs[0]
-        refs = (spec.get("resources") or []) + (spec.get("components") or [])
-        if not isinstance(refs, list):
-            return "render-unsupported"
+        try:
+            refs = _kustomization_references(spec)
+        except Invalid as exc:
+            return exc.code
         for ref in refs:
-            if not isinstance(ref, str):
-                return "render-unsupported"
-            if REMOTE.match(ref):
+            if _remote_reference(ref):
                 return "remote-build-dependency"
-            candidate = (current / ref).resolve()
+            try:
+                candidate = (current / ref).resolve(strict=True)
+            except OSError:
+                return "render-unsupported"
             if not candidate.is_relative_to(root):
                 return "render-unsupported"
             if candidate.is_dir():
                 queue.append(candidate)
+            elif not candidate.is_file():
+                return "render-unsupported"
     return None
 
 
@@ -448,27 +552,86 @@ def has_unresolved_substitution(value: Any) -> bool:
     return False
 
 
+def substitution_error(rendered: list[dict[str, Any]], definition: dict[str, Any]) -> str | None:
+    spec = definition.get("spec") or {}
+    post_build = spec.get("postBuild") or {}
+    if not isinstance(post_build, dict):
+        return "unsupported-substitution"
+    literal = post_build.get("substitute") or {}
+    if not isinstance(literal, dict) or any(
+        not isinstance(key, str) or not isinstance(value, str)
+        for key, value in literal.items()
+    ):
+        return "unsupported-substitution"
+    external = post_build.get("substituteFrom") or []
+    if not isinstance(external, list) or any(not isinstance(item, dict) for item in external):
+        return "unsupported-substitution"
+
+    def check(value: Any) -> bool:
+        if isinstance(value, str):
+            for match in UNRESOLVED_SUBSTITUTION.finditer(value):
+                name = match.group(1)
+                if not SUBSTITUTION_NAME.fullmatch(name) or name not in literal:
+                    return False
+            return True
+        if isinstance(value, list):
+            return all(check(item) for item in value)
+        if isinstance(value, dict):
+            return all(check(item) for item in value.values())
+        return True
+
+    if any(not check(document) for document in rendered):
+        return "unsupported-substitution"
+    if any(has_unresolved_substitution(value) for value in literal.values()):
+        return "unsupported-substitution"
+    return None
+
+
+def kustomize_build(repo: Path, path: str) -> list[dict[str, Any]]:
+    directory = (repo / path.lstrip("./")).resolve()
+    if not directory.is_relative_to(repo.resolve()):
+        raise Invalid("render-unsupported")
+    rendered = command(["kustomize", "build", str(directory)], cwd=repo)
+    return yaml_documents(rendered)
+
+
 def flux_build(repo: Path, name: str, path: str, definition: Path, namespace: str = "flux-system") -> list[dict[str, Any]]:
-    source = f"GitRepository/flux-system/home-kubernetes={repo}"
-    rendered = command([
+    directory = (repo / path.lstrip("./")).resolve()
+    graph_error = local_graph_error(directory, repo)
+    if graph_error:
+        raise Invalid(graph_error)
+    kustomization_docs = [
+        document for document in file_documents(definition)
+        if document.get("kind") == "Kustomization"
+    ]
+    if len(kustomization_docs) != 1:
+        raise Invalid("render-unsupported")
+    arguments = [
         "flux", "build", "kustomization", name,
         "--path", str(repo / path.lstrip("./")),
         "--kustomization-file", str(definition),
         "--namespace", namespace,
         "--dry-run",
-        "--local-sources", source,
-    ], cwd=repo)
-    return yaml_documents(rendered)
+        "--local-sources", f"GitRepository/flux-system/home-kubernetes={repo}",
+    ]
+    rendered = yaml_documents(command(arguments, cwd=repo))
+    substitute_error = substitution_error(rendered, kustomization_docs[0])
+    if substitute_error:
+        raise Invalid(substitute_error)
+    return yaml_documents(command([*arguments, "--strict-substitute"], cwd=repo))
 
 
 def render(repo: Path) -> tuple[list[dict[str, Any]], dict[str, str]]:
     if tool_versions() != VERSIONS:
         raise Invalid("render-tool-version-mismatch")
     for root in (repo / "kubernetes/flux", repo / "kubernetes/apps"):
-        if local_graph_error(root):
+        if local_graph_error(root, repo):
             raise Invalid("root-render-unsupported")
-    cluster = flux_build(repo, "cluster", "./kubernetes/flux", repo / "kubernetes/flux/config/cluster.yaml")
-    apps = flux_build(repo, "cluster-apps", "./kubernetes/apps", repo / "kubernetes/flux/apps.yaml")
+    try:
+        cluster = flux_build(repo, "cluster", "./kubernetes/flux", repo / "kubernetes/flux/config/cluster.yaml")
+        apps = flux_build(repo, "cluster-apps", "./kubernetes/apps", repo / "kubernetes/flux/apps.yaml")
+    except Invalid as exc:
+        raise Invalid("root-render-unsupported") from exc
     docs = cluster + apps
     errors: dict[str, str] = {}
     queue = [doc for doc in docs if doc.get("kind") == "Kustomization"]
@@ -498,7 +661,7 @@ def render(repo: Path) -> tuple[list[dict[str, Any]], dict[str, str]]:
                     raise Invalid("root-render-unsupported")
                 errors[owner] = "remote-build-dependency"
                 continue
-            unsupported = local_graph_error(leaf)
+            unsupported = local_graph_error(leaf, repo)
             if unsupported:
                 if intermediate:
                     raise Invalid("root-render-unsupported")
@@ -508,10 +671,14 @@ def render(repo: Path) -> tuple[list[dict[str, Any]], dict[str, str]]:
             definition.write_text(json.dumps(ks, separators=(",", ":")) + "\n")
             try:
                 child_docs = flux_build(repo, name, path, definition, ns)
-            except Invalid:
+            except Invalid as exc:
                 if intermediate:
                     raise Invalid("root-render-unsupported")
-                errors[owner] = "remote-build-dependency"
+                errors[owner] = (
+                    "unsupported-substitution"
+                    if exc.code == "unsupported-substitution"
+                    else "remote-build-dependency"
+                )
                 continue
             docs.extend(child_docs)
             queue.extend(doc for doc in child_docs if doc.get("kind") == "Kustomization")
@@ -980,6 +1147,32 @@ def root_failure(snapshot: dict[str, Any], target_sha: str, parent_sha: str) -> 
     }
 
 
+def run_preflight_fixture(path: Path) -> dict[str, Any]:
+    fixture = json.loads(path.read_text())
+    results = []
+    for case in fixture.get("preflight_cases", []):
+        with tempfile.TemporaryDirectory(prefix="health-gate-preflight-") as directory:
+            root = Path(directory)
+            (root / "kustomization.yaml").write_text("resources:\n  - resource.json\n")
+            (root / "resource.json").write_text(json.dumps(case["resource"], separators=(",", ":")))
+            graph_error = local_graph_error(root, root)
+            if graph_error:
+                reason = graph_error
+            else:
+                rendered = kustomize_build(root, ".")
+                reason = substitution_error(rendered, case["definition"])
+            results.append({"name": case["name"], "reason_code": reason or "supported"})
+    for case in fixture.get("graph_cases", []):
+        with tempfile.TemporaryDirectory(prefix="health-gate-graph-") as directory:
+            root = Path(directory)
+            (root / "kustomization.yaml").write_text(
+                json.dumps(case["kustomization"], separators=(",", ":"))
+            )
+            reason = local_graph_error(root, root)
+            results.append({"name": case["name"], "reason_code": reason or "supported"})
+    return {"cases": results}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--target-sha", required=True)
@@ -988,9 +1181,12 @@ def main() -> int:
     parser.add_argument("--repo-root", type=Path)
     parser.add_argument("--parent-root", type=Path)
     parser.add_argument("--fixture-input", type=Path)
+    parser.add_argument("--preflight-fixture", type=Path)
     args = parser.parse_args()
     try:
-        if args.fixture_input:
+        if args.preflight_fixture:
+            result = run_preflight_fixture(args.preflight_fixture)
+        elif args.fixture_input:
             fixture = json.loads(args.fixture_input.read_text())
             result = attest(
                 fixture["target_render"],

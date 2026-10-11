@@ -56,7 +56,8 @@
       "baseline-missing",
       "helm-attempt-not-settled",
       "kustomization-not-settled-at-target",
-      "merge-cas-unavailable"
+      "merge-cas-unavailable",
+      "poll-deadline-after-timeout"
     ],
     "outcome": "inconclusive",
     "sample_valid": true,

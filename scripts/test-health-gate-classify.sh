@@ -266,7 +266,21 @@ cat > "$RBAC_STUB_DIR/kubectl" <<'STUB'
 set -euo pipefail
 case "${1:-}" in
   get)
-    exit 0
+    case "$RBAC_STUB_MODE" in
+      allow|grant)
+        exit 0
+        ;;
+      deny)
+        exit 1
+        ;;
+      command-error)
+        printf 'stubbed kubectl get error\n' >&2
+        exit 1
+        ;;
+      *)
+        exit 97
+        ;;
+    esac
     ;;
   auth)
     [ "${2:-}" = can-i ] || exit 96
@@ -320,6 +334,8 @@ for step_id in verify-flux-source-reads deny-secret-configmap-reads deny-source-
   extract_rbac_step "$step_id" "$TMP_DIR/rbac-$step_id.sh"
 done
 run_rbac_scenario verify-flux-source-reads allow 0
+run_rbac_scenario verify-flux-source-reads deny 1
+run_rbac_scenario verify-flux-source-reads command-error 1
 for step_id in deny-secret-configmap-reads deny-source-flux-mutations; do
   run_rbac_scenario "$step_id" deny 0
   run_rbac_scenario "$step_id" grant 1
@@ -394,6 +410,8 @@ required=(
   unchanged-helmrelease-target-namespace
   unchanged-oci-source-timeout
   wall-deadline-preserves-last-real-diagnostics
+  wall-deadline-loop-preserves-last-invalid-classification
+  wall-deadline-read-preserves-last-invalid-classification
   remote-build-dependency-owner
   render-preflight
   newest-history-failed
@@ -589,6 +607,10 @@ case "$tool" in
     response=$(next_response "$POLL_MAIN_RESPONSES" gh-count)
     case "$response" in
       error) trace gh-main-error; exit 1 ;;
+      hang)
+        trace gh-main-hang
+        exec "$REAL_SLEEP" 30
+        ;;
       advanced)
         trace gh-main-advanced
         printf '%s\n' 2222222222222222222222222222222222222222
@@ -683,6 +705,10 @@ case "$tool" in
       case "$response" in
         error) trace jq-classifier-error; exit 4 ;;
         pass) trace jq-classifier-pass ;;
+        hang)
+          trace jq-classifier-hang
+          exec "$REAL_SLEEP" 30
+          ;;
         *) trace jq-invalid-response; exit 97 ;;
       esac
     fi
@@ -770,10 +796,11 @@ for fixture in "$FIXTURE_DIR"/*.json; do
   result=$(awk '/^diagnostics<<HEALTHGATEEOF$/ { inside=1; next } inside && /^HEALTHGATEEOF$/ { exit } inside { print }' "$GITHUB_OUTPUT")
   if ! printf '%s' "$result" | jq -e \
     --argjson expected "$(jq -c '.expected' "$poll_effective_fixture")" \
+    --argjson poll_superseded "$(jq -c '.poll_expected.superseded // .expected.superseded' "$poll_effective_fixture")" \
     --argjson poll_codes "$(jq -c '.poll_expected.diagnostic_codes // .expected.diagnostic_codes // []' "$poll_effective_fixture")" '
     .all_ready == $expected.all_ready
     and .sample_valid == $expected.sample_valid
-    and .superseded == $expected.superseded
+    and .superseded == $poll_superseded
     and (.stalled_or_failed == [])
     and (([.diagnostics[]?.code] | unique | sort)
          == ($poll_codes | unique | sort))

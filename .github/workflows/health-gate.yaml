@@ -695,17 +695,25 @@ jobs:
 
           POLL_WALL_EXPIRED=false
           POLL_LAST_CALL_TIMED_OUT=false
-          LAST_CLASSIFIED_SAMPLE=false
+          LAST_CLASSIFICATION_COMPLETED=false
 
           record_api_error() {
             if [ "$POLL_LAST_CALL_TIMED_OUT" = true ] \
-              && [ "$LAST_CLASSIFIED_SAMPLE" = true ]; then
+              && [ "$LAST_CLASSIFICATION_COMPLETED" = true ]; then
+              LAST_RESULT=$(printf '%s' "$LAST_RESULT" | jq -c \
+                --argjson observed_superseded "$EXTRA_SUPERSEDED" '
+                .
+                | .superseded = ((.superseded == true) or $observed_superseded)
+                | if any(.diagnostics[]?; .code == "poll-deadline-after-timeout") then .
+                  else .diagnostics += [{"kind":"Sample","namespace":"","name":"","code":"poll-deadline-after-timeout","reason":"poll-deadline-after-timeout"}]
+                  end
+              ')
               return
             fi
             LAST_RESULT=$(printf \
-              '{"target_sha":"%s","all_ready":false,"sample_valid":false,"superseded":false,"stalled_or_failed":[],"diagnostics":[{"kind":"Sample","namespace":"","name":"","code":"api-error","reason":"api-error"}]}' \
-              "$TARGET_SHA")
-            LAST_CLASSIFIED_SAMPLE=false
+              '{"target_sha":"%s","all_ready":false,"sample_valid":false,"superseded":%s,"stalled_or_failed":[],"diagnostics":[{"kind":"Sample","namespace":"","name":"","code":"api-error","reason":"api-error"}]}' \
+              "$TARGET_SHA" "$EXTRA_SUPERSEDED")
+            LAST_CLASSIFICATION_COMPLETED=false
           }
 
           if [ -z "$WINDOW_SECONDS" ]; then WINDOW_SECONDS=900; fi
@@ -783,10 +791,8 @@ jobs:
             while :; do
               if [ "$POLL_WALL_EXPIRED" = true ] \
                 || [ "$SECONDS" -ge "$POLL_WALL_DEADLINE" ]; then
-                if [ "$LAST_CLASSIFIED_SAMPLE" != true ]; then
-                  POLL_LAST_CALL_TIMED_OUT=true
-                  record_api_error
-                fi
+                POLL_LAST_CALL_TIMED_OUT=true
+                record_api_error
                 break
               fi
               if ! run_bounded 5 date +%s > "$PRIVATE/now"; then
@@ -911,11 +917,7 @@ jobs:
                 continue
               fi
               LAST_RESULT=$(<"$PRIVATE/result.json")
-              if [[ "$LAST_RESULT" == *'"sample_valid":true'* ]]; then
-                LAST_CLASSIFIED_SAMPLE=true
-              else
-                LAST_CLASSIFIED_SAMPLE=false
-              fi
+              LAST_CLASSIFICATION_COMPLETED=true
               if ! run_bounded 10 jq -r '.superseded' "$PRIVATE/result.json" \
                 > "$PRIVATE/superseded"; then
                 record_api_error

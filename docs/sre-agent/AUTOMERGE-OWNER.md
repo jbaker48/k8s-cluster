@@ -14,16 +14,17 @@ days for major, minor, and patch releases. `timestamp-optional` avoids holding
 updates forever when a release timestamp is missing; Renovate silently stalled
 for five months before (`k8s-ykh`).
 
-Renovate requires dependency dashboard approval before opening Talos, Kubernetes, Cilium, and Rook-Ceph update PRs.
+Renovate requires dependency dashboard approval before opening Talos,
+Kubernetes, Cilium, and Rook-Ceph update PRs.
 Dashboard approval only gates Renovate branch and PR creation; it does not
 check the approver's identity or block merging. Talos, Kubernetes-core paths,
 and Cilium are additionally blocked from auto-merge by
 `.github/exclusion-gate.yaml`.
 
-Rook-Ceph is not currently covered by `.github/exclusion-gate.yaml`. Until the
-separately tracked high-risk follow-up adds it, Rook-Ceph PRs rely on the owner
-merging manually before go-live and on AI review and the health gate after
-go-live.
+Rook-Ceph is not yet in `.github/exclusion-gate.yaml`; adding it is tracked in
+`k8s-a0h`, which is a hard prerequisite of auto-merge go-live
+(`k8s-zdb.6.1` depends on it). Auto-merge must not go live while Rook-Ceph PRs
+can reach it; until then every Rook-Ceph PR is merged by the owner manually.
 
 ## ARC runner image tracking
 

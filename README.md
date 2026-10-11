@@ -112,3 +112,5 @@ flux get kustomizations -A
 ---
 
 Built with ❤️ for self-hosting enthusiasts
+
+<!-- CR-02 circuit-breaker verification marker (k8s-zdb.5.3) - do not merge -->

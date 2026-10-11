@@ -182,6 +182,9 @@ jobs:
           def helm_inventory_id($hr):
             (($hr.metadata.namespace // "default") + "_" + $hr.metadata.name +
              "_helm.toolkit.fluxcd.io_HelmRelease");
+          def kustomization_inventory_id($ks):
+            (($ks.metadata.namespace // "default") + "_" + $ks.metadata.name +
+             "_kustomize.toolkit.fluxcd.io_Kustomization");
           def has_helm_inventory($ks; $hr):
             (($ks.status.inventory_ids // [])
              | index(helm_inventory_id($hr))) != null;
@@ -258,18 +261,28 @@ jobs:
           | ([ $allks[] as $ks
                | [($ks.status.inventory_ids // [])[]?
                   | select(type == "string" and
-                          endswith("_helm.toolkit.fluxcd.io_HelmRelease"))
+                          (endswith("_helm.toolkit.fluxcd.io_HelmRelease")
+                           or
+                           endswith("_kustomize.toolkit.fluxcd.io_Kustomization")))
                  ] as $ids
                | select(($ids | unique | length) != ($ids | length))
              ]) as $inventoryduplicates
           | ([ $allks[] as $ks
                | ($ks.status.inventory_ids // [])[]? as $id
                | select(($id | type) == "string"
-                       and
-                         ($id
-                          | endswith("_helm.toolkit.fluxcd.io_HelmRelease")))
-               | select([ $allhrs[]
-                         | select(helm_inventory_id(.) == $id) ] | length != 1)
+                       and ($id
+                            | endswith("_helm.toolkit.fluxcd.io_HelmRelease")
+                               or
+                               endswith("_kustomize.toolkit.fluxcd.io_Kustomization")))
+               | select(
+                   if ($id | endswith("_helm.toolkit.fluxcd.io_HelmRelease"))
+                   then ([ $allhrs[] | select(helm_inventory_id(.) == $id) ] | length) != 1
+                   else ([ $allks[] | select(kustomization_inventory_id(.) == $id) ] | length) != 1
+                     or ([ $allks[]
+                           | select((.status.inventory_ids // []) | index($id) != null)
+                         ] | length) != 1
+                   end
+                 )
                | {ks:$ks, id:$id} ]) as $inventoryorphans
           | ([ $p.helm_releases[]? as $proof
                | select([$allhrs[]

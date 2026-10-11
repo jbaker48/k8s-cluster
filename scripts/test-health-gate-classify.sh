@@ -184,6 +184,7 @@ required=(
   newest-history-wrong-chart
   newest-history-wrong-digest
   inventory-orphan
+  kustomization-inventory-orphan
   unknown-reconciling-condition
 )
 
@@ -243,11 +244,15 @@ for fixture in "$FIXTURE_DIR"/*.json; do
       --target-sha "$target_sha" \
       --parent-sha "$parent_sha" \
       --preflight-fixture "$fixture" > "$proof_file"
-    jq -e --argjson expected "$(jq -c '.preflight_expected' "$fixture")" '
+    jq -e \
+      --argjson expected "$(jq -c '.preflight_expected' "$fixture")" \
+      --argjson production_expected "$(jq -c '.production_build_expected // []' "$fixture")" '
       ([.cases[] | {name, reason_code}] | sort_by(.name)) == ($expected | sort_by(.name))
+      and ([.production_build_cases[]?
+            | {name, reason_code, flux_invoked, flux_substitution_invoked, documents_retained}]
+           | sort_by(.name)) == ($production_expected | sort_by(.name))
     ' "$proof_file" >/dev/null || {
-      printf 'render preflight fixture failed: %s actual=%s expected=%s\n' \
-        "$name" "$(jq -c '.cases' "$proof_file")" "$(jq -c '.preflight_expected' "$fixture")" >&2
+      printf 'render preflight fixture failed: %s\n' "$name" >&2
       exit 1
     }
     passed=$((passed + 1))

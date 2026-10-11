@@ -55,8 +55,9 @@ OCI_SPEC_FIELDS = {
 
 
 class Invalid(Exception):
-    def __init__(self, code: str):
+    def __init__(self, code: str, documents: list[dict[str, Any]] | None = None):
         self.code = code
+        self.documents = documents or []
 
 
 def canonical(value: Any) -> bytes:
@@ -438,6 +439,19 @@ def _kustomization_references(spec: dict[str, Any]) -> list[str]:
                 refs.append(path)
         else:
             raise Invalid("render-unsupported")
+    replacements = spec.get("replacements", [])
+    if replacements is None:
+        replacements = []
+    if not isinstance(replacements, list):
+        raise Invalid("render-unsupported")
+    for replacement in replacements:
+        if not isinstance(replacement, dict):
+            raise Invalid("render-unsupported")
+        path = replacement.get("path")
+        if path is not None:
+            if not isinstance(path, str):
+                raise Invalid("render-unsupported")
+            refs.append(path)
     openapi = spec.get("openapi") or {}
     if not isinstance(openapi, dict):
         raise Invalid("render-unsupported")
@@ -591,6 +605,9 @@ def kustomize_build(repo: Path, path: str) -> list[dict[str, Any]]:
     directory = (repo / path.lstrip("./")).resolve()
     if not directory.is_relative_to(repo.resolve()):
         raise Invalid("render-unsupported")
+    graph_error = local_graph_error(directory, repo)
+    if graph_error:
+        raise Invalid(graph_error)
     rendered = command(["kustomize", "build", str(directory)], cwd=repo)
     return yaml_documents(rendered)
 
@@ -614,6 +631,20 @@ def flux_build(repo: Path, name: str, path: str, definition: Path, namespace: st
         "--dry-run",
         "--local-sources", f"GitRepository/flux-system/home-kubernetes={repo}",
     ]
+    unexpanded_definition = json.loads(json.dumps(kustomization_docs[0]))
+    unexpanded_spec = unexpanded_definition.get("spec") or {}
+    if not isinstance(unexpanded_spec, dict):
+        raise Invalid("render-unsupported")
+    unexpanded_spec.pop("postBuild", None)
+    with tempfile.TemporaryDirectory(prefix="health-gate-unexpanded-") as directory:
+        raw_definition = Path(directory) / "kustomization.json"
+        raw_definition.write_text(json.dumps(unexpanded_definition, separators=(",", ":")))
+        raw_arguments = list(arguments)
+        raw_arguments[raw_arguments.index("--kustomization-file") + 1] = str(raw_definition)
+        unexpanded = yaml_documents(command(raw_arguments, cwd=repo))
+    substitute_error = substitution_error(unexpanded, kustomization_docs[0])
+    if substitute_error:
+        raise Invalid(substitute_error, documents=unexpanded)
     rendered = yaml_documents(command(arguments, cwd=repo))
     substitute_error = substitution_error(rendered, kustomization_docs[0])
     if substitute_error:
@@ -679,6 +710,9 @@ def render(repo: Path) -> tuple[list[dict[str, Any]], dict[str, str]]:
                     if exc.code == "unsupported-substitution"
                     else "remote-build-dependency"
                 )
+                if exc.code == "unsupported-substitution":
+                    docs.extend(exc.documents)
+                    queue.extend(doc for doc in exc.documents if doc.get("kind") == "Kustomization")
                 continue
             docs.extend(child_docs)
             queue.extend(doc for doc in child_docs if doc.get("kind") == "Kustomization")
@@ -903,6 +937,8 @@ def attest(target: list[dict[str, Any]], parent: list[dict[str, Any]], snapshot:
         diagnostics.append({"kind": "Main", "namespace": "", "name": "main", "code": "superseded", "reason": "main-advanced-during-sample"})
 
     def current_failure(resource: dict[str, Any]) -> bool:
+        if (resource.get("spec") or {}).get("suspend") is True:
+            return False
         metadata = resource.get("metadata") or {}
         status = resource.get("status") or {}
         generation = metadata.get("generation")
@@ -912,17 +948,20 @@ def attest(target: list[dict[str, Any]], parent: list[dict[str, Any]], snapshot:
             or metadata.get("deletionTimestamp")
             or not isinstance(status, dict)
             or status.get("observedGeneration") != generation
-            or conditions is None
+            or not conditions
             or any(condition.get("observedGeneration") != generation for condition in conditions)
         ):
             return True
-        return any(
-            condition.get("observedGeneration") == generation
-            and (
-                (condition.get("type") == "Ready" and condition.get("status") == "False")
-                or (condition.get("type") == "Stalled" and condition.get("status") == "True")
+        ready = [condition for condition in conditions if condition.get("type") == "Ready"]
+        return (
+            len(ready) != 1
+            or ready[0].get("status") != "True"
+            or any(
+                condition.get("type") in {"Reconciling", "Stalled"}
+                and condition.get("status") != "False"
+                for condition in conditions
             )
-            for condition in conditions
+            or any(condition.get("status") == "Unknown" for condition in conditions)
         )
 
     target_revision = f"main@sha1:{target_sha}"
@@ -934,7 +973,7 @@ def attest(target: list[dict[str, Any]], parent: list[dict[str, Any]], snapshot:
         status = source.get("status") or {}
         generation = metadata.get("generation")
         conditions = current_conditions(source)
-        if conditions is None:
+        if not conditions:
             return False
         ready = [condition for condition in conditions
                  if condition.get("type") == "Ready"]
@@ -955,21 +994,43 @@ def attest(target: list[dict[str, Any]], parent: list[dict[str, Any]], snapshot:
             return False
         active = [resource for resource in live["kustomizations"]
                   if (resource.get("spec") or {}).get("suspend") is not True]
-        if not active:
+        active_ids = {object_key(resource) for resource in active}
+        if not active or not {("flux-system", "cluster"), ("flux-system", "cluster-apps")} <= active_ids:
             return False
         for resource in active:
             status = resource.get("status") or {}
             metadata = resource.get("metadata") or {}
             generation = metadata.get("generation")
+            conditions = current_conditions(resource)
+            ready = [condition for condition in conditions or []
+                     if condition.get("type") == "Ready"]
+            ident = object_key(resource)
             if (
                 not isinstance(generation, int)
                 or status.get("observedGeneration") != generation
                 or status.get("lastAttemptedRevision") != target_revision
+                or not conditions
+                or any(condition.get("observedGeneration") != generation for condition in conditions)
+                or len(ready) != 1
+                or ready[0].get("status") not in {"True", "False"}
+                or any(condition.get("type") == "Stalled"
+                       and condition.get("status") != "False" for condition in conditions)
+                or any(condition.get("type") == "Reconciling"
+                       and condition.get("status") != "False" for condition in conditions)
+                or any(condition.get("status") == "Unknown" for condition in conditions)
             ):
                 return False
             applied = status.get("lastAppliedRevision")
-            ident = object_key(resource)
-            if applied != target_revision and not ("/".join(ident) == owner_key and applied == parent_revision):
+            expected_child_failure = (
+                "/".join(ident) == owner_key
+                and ready[0].get("status") == "False"
+                and ready[0].get("reason") == "HealthCheckFailed"
+                and not any(condition.get("type") == "Stalled"
+                            and condition.get("status") == "True" for condition in conditions)
+            )
+            if ready[0].get("status") != "True" and not expected_child_failure:
+                return False
+            if applied != target_revision and not (expected_child_failure and applied == parent_revision):
                 return False
         return True
 
@@ -1170,7 +1231,53 @@ def run_preflight_fixture(path: Path) -> dict[str, Any]:
             )
             reason = local_graph_error(root, root)
             results.append({"name": case["name"], "reason_code": reason or "supported"})
-    return {"cases": results}
+    production_build_results = []
+    for case in fixture.get("production_build_cases", []):
+        with tempfile.TemporaryDirectory(prefix="health-gate-build-preflight-") as directory:
+            root = Path(directory)
+            (root / "kustomization.yaml").write_text(
+                json.dumps(case["kustomization"], separators=(",", ":"))
+            )
+            for filename, resource in case.get("resources", {}).items():
+                (root / filename).write_text(json.dumps(resource, separators=(",", ":")))
+            definition = root / "flux-kustomization.json"
+            definition.write_text(json.dumps(case["definition"], separators=(",", ":")))
+            original_command = command
+            flux_invocations = []
+            flux_substitution_invocations = []
+            retained_documents = 0
+
+            def recording_command(argv: list[str], cwd: Path | None = None,
+                                  input_text: str | None = None) -> str:
+                if argv and argv[0] == "flux":
+                    flux_invocations.append(argv)
+                    definition_index = argv.index("--kustomization-file") + 1
+                    flux_definition = json.loads(Path(argv[definition_index]).read_text())
+                    if ((flux_definition.get("spec") or {}).get("postBuild")):
+                        flux_substitution_invocations.append(argv)
+                    return "\n".join(
+                        json.dumps(resource, separators=(",", ":"))
+                        for resource in case.get("resources", {}).values()
+                    )
+                return original_command(argv, cwd=cwd, input_text=input_text)
+
+            globals()["command"] = recording_command
+            reason = None
+            try:
+                flux_build(root, case["name"], ".", definition)
+            except Invalid as exc:
+                reason = exc.code
+                retained_documents = len(exc.documents)
+            finally:
+                globals()["command"] = original_command
+            production_build_results.append({
+                "name": case["name"],
+                "reason_code": reason or "supported",
+                "flux_invoked": bool(flux_invocations),
+                "flux_substitution_invoked": bool(flux_substitution_invocations),
+                "documents_retained": retained_documents,
+            })
+    return {"cases": results, "production_build_cases": production_build_results}
 
 
 def main() -> int:

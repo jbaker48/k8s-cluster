@@ -55,6 +55,35 @@
       }
     },
     {
+      "name": "defaulted-external-substitution",
+      "resource": {
+        "apiVersion": "v1",
+        "kind": "ConfigMap",
+        "metadata": {
+          "name": "defaulted-external"
+        },
+        "data": {
+          "version": "${REL}",
+          "token": "${TOKEN:=fallback}"
+        }
+      },
+      "definition": {
+        "spec": {
+          "postBuild": {
+            "substitute": {
+              "REL": "1.2.3"
+            },
+            "substituteFrom": [
+              {
+                "kind": "Secret",
+                "name": "inputs"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
       "name": "unused-external-substitution",
       "resource": {
         "apiVersion": "v1",
@@ -100,6 +129,16 @@
       }
     },
     {
+      "name": "remote-replacement-file",
+      "kustomization": {
+        "replacements": [
+          {
+            "path": "https://example.invalid/replacements.yaml"
+          }
+        ]
+      }
+    },
+    {
       "name": "remote-git-component",
       "kustomization": {
         "components": [
@@ -126,6 +165,91 @@
       }
     }
   ],
+  "production_build_cases": [
+    {
+      "name": "defaulted-external-substitution-before-flux",
+      "kustomization": {
+        "apiVersion": "kustomize.config.k8s.io/v1beta1",
+        "kind": "Kustomization",
+        "resources": [
+          "resource.json"
+        ]
+      },
+      "resources": {
+        "resource.json": {
+          "apiVersion": "helm.toolkit.fluxcd.io/v2",
+          "kind": "HelmRelease",
+          "metadata": {
+            "name": "external-default",
+            "namespace": "apps"
+          },
+          "spec": {
+            "chartRef": {
+              "kind": "OCIRepository",
+              "name": "chart"
+            },
+            "values": {
+              "version": "${REL}",
+              "token": "${TOKEN:=fallback}"
+            }
+          }
+        }
+      },
+      "definition": {
+        "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+        "kind": "Kustomization",
+        "metadata": {
+          "name": "fixture",
+          "namespace": "flux-system"
+        },
+        "spec": {
+          "path": "./",
+          "sourceRef": {
+            "kind": "GitRepository",
+            "name": "home-kubernetes"
+          },
+          "postBuild": {
+            "substitute": {
+              "REL": "1.2.3"
+            },
+            "substituteFrom": [
+              {
+                "kind": "Secret",
+                "name": "inputs"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "remote-replacement-before-flux",
+      "kustomization": {
+        "apiVersion": "kustomize.config.k8s.io/v1beta1",
+        "kind": "Kustomization",
+        "replacements": [
+          {
+            "path": "https://example.invalid/replacements.yaml"
+          }
+        ]
+      },
+      "definition": {
+        "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+        "kind": "Kustomization",
+        "metadata": {
+          "name": "fixture",
+          "namespace": "flux-system"
+        },
+        "spec": {
+          "path": "./",
+          "sourceRef": {
+            "kind": "GitRepository",
+            "name": "home-kubernetes"
+          }
+        }
+      }
+    }
+  ],
   "preflight_expected": [
     {
       "name": "literal-substitution",
@@ -133,6 +257,10 @@
     },
     {
       "name": "external-substitution-with-literal",
+      "reason_code": "unsupported-substitution"
+    },
+    {
+      "name": "defaulted-external-substitution",
       "reason_code": "unsupported-substitution"
     },
     {
@@ -148,6 +276,10 @@
       "reason_code": "remote-build-dependency"
     },
     {
+      "name": "remote-replacement-file",
+      "reason_code": "remote-build-dependency"
+    },
+    {
       "name": "remote-git-component",
       "reason_code": "remote-build-dependency"
     },
@@ -158,6 +290,22 @@
     {
       "name": "unsupported-helm-chart-build",
       "reason_code": "remote-build-dependency"
+    }
+  ],
+  "production_build_expected": [
+    {
+      "name": "defaulted-external-substitution-before-flux",
+      "reason_code": "unsupported-substitution",
+      "flux_invoked": true,
+      "flux_substitution_invoked": false,
+      "documents_retained": 1
+    },
+    {
+      "name": "remote-replacement-before-flux",
+      "reason_code": "remote-build-dependency",
+      "flux_invoked": false,
+      "flux_substitution_invoked": false,
+      "documents_retained": 0
     }
   ]
 }

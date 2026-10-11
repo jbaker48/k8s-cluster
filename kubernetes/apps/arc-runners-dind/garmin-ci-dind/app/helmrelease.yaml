@@ -151,12 +151,16 @@ spec:
             # D-01: same Burstable rationale as garmin-ci -- talos02 is the only node with
             # real headroom by request; no CPU limit so jobs can burst into idle CPU once
             # scheduled.
+            # Limit 10Gi (was 4Gi): garmin-ai-coach's cdk-diff runs jest with 4 workers at a
+            # 2 GiB heap each, and at 4Gi the runner was killed mid-job ("runner lost
+            # communication", PR #263, 2026-10-12). The request is unchanged, so scheduling is
+            # unaffected; talos02/03 had 36%/18% memory in use at the time.
             resources:
               requests:
                 cpu: 250m
                 memory: 2Gi
               limits:
-                memory: 4Gi
+                memory: 10Gi
             volumeMounts:
               - name: work
                 mountPath: /home/runner/_work

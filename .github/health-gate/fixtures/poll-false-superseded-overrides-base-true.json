@@ -1,0 +1,30 @@
+{
+  "name": "poll-false-superseded-overrides-base-true",
+  "base_fixture": "main-advanced-after-sample",
+  "poll_scenario": "hung-kubectl",
+  "poll_window_seconds": 4,
+  "poll_responses": {
+    "main": ["target"],
+    "kubectl": ["hang"],
+    "producer": [],
+    "classifier": [],
+    "clock": ["100", "100"]
+  },
+  "poll_expected": {
+    "all_ready": false,
+    "command_trace": [
+      "clock:100",
+      "clock:100",
+      "gh-main-target",
+      "kubectl-get-hang:kustomizations",
+      "git-diff",
+      "git-worktree-remove",
+      "clock-utc",
+      "kubectl-create-event"
+    ],
+    "diagnostic_codes": ["api-error"],
+    "outcome": "inconclusive",
+    "sample_valid": false,
+    "superseded": false
+  }
+}

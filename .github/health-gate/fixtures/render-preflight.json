@@ -1,0 +1,311 @@
+{
+  "name": "render-preflight",
+  "target_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "parent_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "preflight_cases": [
+    {
+      "name": "literal-substitution",
+      "resource": {
+        "apiVersion": "v1",
+        "kind": "ConfigMap",
+        "metadata": {
+          "name": "literal"
+        },
+        "data": {
+          "version": "${REL}"
+        }
+      },
+      "definition": {
+        "spec": {
+          "postBuild": {
+            "substitute": {
+              "REL": "1.2.3"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "external-substitution-with-literal",
+      "resource": {
+        "apiVersion": "v1",
+        "kind": "ConfigMap",
+        "metadata": {
+          "name": "external"
+        },
+        "data": {
+          "version": "${REL}",
+          "token": "${TOKEN}"
+        }
+      },
+      "definition": {
+        "spec": {
+          "postBuild": {
+            "substitute": {
+              "REL": "1.2.3"
+            },
+            "substituteFrom": [
+              {
+                "kind": "Secret",
+                "name": "inputs"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "defaulted-external-substitution",
+      "resource": {
+        "apiVersion": "v1",
+        "kind": "ConfigMap",
+        "metadata": {
+          "name": "defaulted-external"
+        },
+        "data": {
+          "version": "${REL}",
+          "token": "${TOKEN:=fallback}"
+        }
+      },
+      "definition": {
+        "spec": {
+          "postBuild": {
+            "substitute": {
+              "REL": "1.2.3"
+            },
+            "substituteFrom": [
+              {
+                "kind": "Secret",
+                "name": "inputs"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "unused-external-substitution",
+      "resource": {
+        "apiVersion": "v1",
+        "kind": "ConfigMap",
+        "metadata": {
+          "name": "unused"
+        },
+        "data": {
+          "version": "fixed"
+        }
+      },
+      "definition": {
+        "spec": {
+          "postBuild": {
+            "substituteFrom": [
+              {
+                "kind": "ConfigMap",
+                "name": "inputs"
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "graph_cases": [
+    {
+      "name": "remote-github-resource",
+      "kustomization": {
+        "resources": [
+          "github.com/fluxcd/flux2//manifests?ref=v2.8.5"
+        ]
+      }
+    },
+    {
+      "name": "remote-url-patch",
+      "kustomization": {
+        "patches": [
+          {
+            "path": "https://example.invalid/patch.yaml"
+          }
+        ]
+      }
+    },
+    {
+      "name": "remote-replacement-file",
+      "kustomization": {
+        "replacements": [
+          {
+            "path": "https://example.invalid/replacements.yaml"
+          }
+        ]
+      }
+    },
+    {
+      "name": "remote-git-component",
+      "kustomization": {
+        "components": [
+          "git::https://example.invalid/component.git//base?ref=v1"
+        ]
+      }
+    },
+    {
+      "name": "missing-local-resource",
+      "kustomization": {
+        "resources": [
+          "missing.yaml"
+        ]
+      }
+    },
+    {
+      "name": "unsupported-helm-chart-build",
+      "kustomization": {
+        "helmCharts": [
+          {
+            "name": "remote"
+          }
+        ]
+      }
+    }
+  ],
+  "production_build_cases": [
+    {
+      "name": "defaulted-external-substitution-before-flux",
+      "kustomization": {
+        "apiVersion": "kustomize.config.k8s.io/v1beta1",
+        "kind": "Kustomization",
+        "resources": [
+          "resource.json"
+        ]
+      },
+      "resources": {
+        "resource.json": {
+          "apiVersion": "helm.toolkit.fluxcd.io/v2",
+          "kind": "HelmRelease",
+          "metadata": {
+            "name": "external-default",
+            "namespace": "apps"
+          },
+          "spec": {
+            "chartRef": {
+              "kind": "OCIRepository",
+              "name": "chart"
+            },
+            "values": {
+              "version": "${REL}",
+              "token": "${TOKEN:=fallback}"
+            }
+          }
+        }
+      },
+      "definition": {
+        "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+        "kind": "Kustomization",
+        "metadata": {
+          "name": "fixture",
+          "namespace": "flux-system"
+        },
+        "spec": {
+          "path": "./",
+          "sourceRef": {
+            "kind": "GitRepository",
+            "name": "home-kubernetes"
+          },
+          "postBuild": {
+            "substitute": {
+              "REL": "1.2.3"
+            },
+            "substituteFrom": [
+              {
+                "kind": "Secret",
+                "name": "inputs"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "remote-replacement-before-flux",
+      "kustomization": {
+        "apiVersion": "kustomize.config.k8s.io/v1beta1",
+        "kind": "Kustomization",
+        "replacements": [
+          {
+            "path": "https://example.invalid/replacements.yaml"
+          }
+        ]
+      },
+      "definition": {
+        "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+        "kind": "Kustomization",
+        "metadata": {
+          "name": "fixture",
+          "namespace": "flux-system"
+        },
+        "spec": {
+          "path": "./",
+          "sourceRef": {
+            "kind": "GitRepository",
+            "name": "home-kubernetes"
+          }
+        }
+      }
+    }
+  ],
+  "preflight_expected": [
+    {
+      "name": "literal-substitution",
+      "reason_code": "supported"
+    },
+    {
+      "name": "external-substitution-with-literal",
+      "reason_code": "unsupported-substitution"
+    },
+    {
+      "name": "defaulted-external-substitution",
+      "reason_code": "unsupported-substitution"
+    },
+    {
+      "name": "unused-external-substitution",
+      "reason_code": "supported"
+    },
+    {
+      "name": "remote-github-resource",
+      "reason_code": "remote-build-dependency"
+    },
+    {
+      "name": "remote-url-patch",
+      "reason_code": "remote-build-dependency"
+    },
+    {
+      "name": "remote-replacement-file",
+      "reason_code": "remote-build-dependency"
+    },
+    {
+      "name": "remote-git-component",
+      "reason_code": "remote-build-dependency"
+    },
+    {
+      "name": "missing-local-resource",
+      "reason_code": "render-unsupported"
+    },
+    {
+      "name": "unsupported-helm-chart-build",
+      "reason_code": "remote-build-dependency"
+    }
+  ],
+  "production_build_expected": [
+    {
+      "name": "defaulted-external-substitution-before-flux",
+      "reason_code": "unsupported-substitution",
+      "flux_invoked": true,
+      "flux_substitution_invoked": false,
+      "documents_retained": 1
+    },
+    {
+      "name": "remote-replacement-before-flux",
+      "reason_code": "remote-build-dependency",
+      "flux_invoked": false,
+      "flux_substitution_invoked": false,
+      "documents_retained": 0
+    }
+  ]
+}

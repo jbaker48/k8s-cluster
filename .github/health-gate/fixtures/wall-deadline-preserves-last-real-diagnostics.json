@@ -1,0 +1,66 @@
+{
+  "name": "wall-deadline-preserves-last-real-diagnostics",
+  "base_fixture": "cas-unavailable-with-terminal-reconciliation-failure",
+  "poll_scenario": "wall-timeout",
+  "poll_window_seconds": 5,
+  "poll_responses": {
+    "main": [
+      "target",
+      "target"
+    ],
+    "kubectl": [
+      "list",
+      "list",
+      "list",
+      "list",
+      "list",
+      "list",
+      "list",
+      "list",
+      "list",
+      "list",
+      "list",
+      "list"
+    ],
+    "producer": [
+      "proof",
+      "proof"
+    ],
+    "classifier": [
+      "pass"
+    ],
+    "clock": [
+      "100",
+      "100"
+    ]
+  },
+  "poll_expected": {
+    "all_ready": false,
+    "command_trace": [
+      "clock:100",
+      "clock:100",
+      "gh-main-target",
+      "kubectl-snapshot",
+      "producer-attest",
+      "kubectl-snapshot",
+      "gh-main-target",
+      "producer-attest",
+      "jq-classifier-pass",
+      "sleep",
+      "git-diff",
+      "git-worktree-remove",
+      "clock-utc",
+      "kubectl-create-event"
+    ],
+    "diagnostic_codes": [
+      "baseline-missing",
+      "helm-attempt-not-settled",
+      "kustomization-not-settled-at-target",
+      "merge-cas-unavailable",
+      "poll-deadline-after-timeout"
+    ],
+    "outcome": "inconclusive",
+    "sample_valid": true,
+    "superseded": false
+  }
+}

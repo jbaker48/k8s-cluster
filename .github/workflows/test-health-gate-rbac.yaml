@@ -42,32 +42,148 @@ jobs:
           chmod 600 "${KCFG}"
           printf 'KUBECONFIG=%s\n' "${KCFG}" >> "$GITHUB_ENV"
 
-      - name: Verify read access - list Kustomizations cluster-wide
-        run: kubectl get kustomizations.kustomize.toolkit.fluxcd.io -A
-
-      - name: Verify read access - list HelmReleases cluster-wide
-        run: kubectl get helmreleases.helm.toolkit.fluxcd.io -A
-
-      - name: Verify least-privilege boundary - mutating call must be Forbidden
+      - name: Verify reads for Flux source resources
+        id: verify-flux-source-reads
         run: |
           set -euo pipefail
-          set +e
-          OUTPUT=$(kubectl patch kustomization k8s-cluster-ci -n flux-system \
-            --type=merge -p '{"metadata":{"labels":{"gsd-test":"true"}}}' 2>&1)
-          STATUS=$?
-          set -e
+          for resource in \
+            gitrepositories.source.toolkit.fluxcd.io \
+            ocirepositories.source.toolkit.fluxcd.io \
+            helmrepositories.source.toolkit.fluxcd.io \
+            helmcharts.source.toolkit.fluxcd.io; do
+            kubectl get "$resource" -A -o name >/dev/null
+            for verb in get list watch; do
+              answer=$(kubectl auth can-i "$verb" "$resource" --all-namespaces)
+              test "$answer" = "yes"
+            done
+          done
+          kubectl get kustomizations.kustomize.toolkit.fluxcd.io \
+            -A -o name >/dev/null
+          kubectl get helmreleases.helm.toolkit.fluxcd.io \
+            -A -o name >/dev/null
 
-          if [ "$STATUS" -eq 0 ]; then
-            echo "HARD FAILURE: mutating call unexpectedly succeeded - RBAC boundary is not enforced"
-            echo "$OUTPUT"
-            exit 1
-          fi
+      - name: Verify Secret and ConfigMap reads are denied
+        id: deny-secret-configmap-reads
+        run: |
+          set -euo pipefail
+          expect_denied() {
+            local verb="$1"
+            local resource="$2"
+            local scope="$3"
+            local answer status
+            local -a scope_args=()
+            case "$scope" in
+              --all-namespaces)
+                if [ "$#" -ne 3 ]; then
+                  printf 'invalid scope arguments for %s %s\n' "$verb" "$resource" >&2
+                  return 1
+                fi
+                scope_args=(--all-namespaces)
+                ;;
+              --namespace)
+                if [ "$#" -ne 4 ] || [ -z "$4" ]; then
+                  printf 'invalid namespace scope for %s %s\n' "$verb" "$resource" >&2
+                  return 1
+                fi
+                scope_args=(--namespace "$4")
+                ;;
+              *)
+                printf 'invalid denial scope: %s\n' "$scope" >&2
+                return 1
+                ;;
+            esac
+            answer=
+            if answer=$(kubectl auth can-i \
+              "$verb" "$resource" "${scope_args[@]}"); then
+              status=0
+            else
+              status=$?
+            fi
+            if [ "$status" -gt 1 ] || [ "$answer" != "no" ]; then
+              printf '%s %s %s %s (status=%s answer=%s)\n' \
+                expected 'denied permission:' "$verb" "$resource" \
+                "$status" "$answer" >&2
+              return 1
+            fi
+          }
+          for resource in secrets configmaps; do
+            for verb in get list watch; do
+              expect_denied "$verb" "$resource" --all-namespaces
+            done
+          done
+          for namespace in flux-system media; do
+            for resource in secrets configmaps; do
+              for verb in get list; do
+                expect_denied "$verb" "$resource" --namespace "$namespace"
+              done
+            done
+          done
 
-          if echo "$OUTPUT" | grep -qi "forbidden"; then
-            echo "PASS: mutating call correctly rejected as Forbidden"
-            echo "$OUTPUT"
-          else
-            echo "HARD FAILURE: mutating call failed, but NOT with Forbidden - unexpected error"
-            echo "$OUTPUT"
-            exit 1
-          fi
+      - name: Verify source and Flux resource mutations are denied
+        id: deny-source-flux-mutations
+        run: |
+          set -euo pipefail
+          expect_denied() {
+            local verb="$1"
+            local resource="$2"
+            local scope="$3"
+            local answer status
+            local -a scope_args=()
+            case "$scope" in
+              --all-namespaces)
+                if [ "$#" -ne 3 ]; then
+                  printf 'invalid scope arguments for %s %s\n' "$verb" "$resource" >&2
+                  return 1
+                fi
+                scope_args=(--all-namespaces)
+                ;;
+              --namespace)
+                if [ "$#" -ne 4 ] || [ -z "$4" ]; then
+                  printf 'invalid namespace scope for %s %s\n' "$verb" "$resource" >&2
+                  return 1
+                fi
+                scope_args=(--namespace "$4")
+                ;;
+              *)
+                printf 'invalid denial scope: %s\n' "$scope" >&2
+                return 1
+                ;;
+            esac
+            answer=
+            if answer=$(kubectl auth can-i \
+              "$verb" "$resource" "${scope_args[@]}"); then
+              status=0
+            else
+              status=$?
+            fi
+            if [ "$status" -gt 1 ] || [ "$answer" != "no" ]; then
+              printf '%s %s %s %s (status=%s answer=%s)\n' \
+                expected 'denied permission:' "$verb" "$resource" \
+                "$status" "$answer" >&2
+              return 1
+            fi
+          }
+          for resource in \
+            kustomizations.kustomize.toolkit.fluxcd.io \
+            helmreleases.helm.toolkit.fluxcd.io \
+            gitrepositories.source.toolkit.fluxcd.io \
+            ocirepositories.source.toolkit.fluxcd.io \
+            helmrepositories.source.toolkit.fluxcd.io \
+            helmcharts.source.toolkit.fluxcd.io; do
+            for verb in create update patch delete; do
+              expect_denied "$verb" "$resource" --all-namespaces
+            done
+          done
+          for namespace in flux-system media; do
+            for resource in \
+              kustomizations.kustomize.toolkit.fluxcd.io \
+              helmreleases.helm.toolkit.fluxcd.io \
+              gitrepositories.source.toolkit.fluxcd.io \
+              ocirepositories.source.toolkit.fluxcd.io \
+              helmrepositories.source.toolkit.fluxcd.io \
+              helmcharts.source.toolkit.fluxcd.io; do
+              for verb in create update patch delete; do
+                expect_denied "$verb" "$resource" --namespace "$namespace"
+              done
+            done
+          done

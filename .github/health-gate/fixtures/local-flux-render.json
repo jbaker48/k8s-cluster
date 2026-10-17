@@ -1,0 +1,24 @@
+{
+  "expected": {
+    "all_ready": false,
+    "diagnostic_codes": [
+      "desired-helmrelease-not-live",
+      "desired-kustomization-not-live",
+      "helmchart-artifact-unbound",
+      "helmchart-missing",
+      "helmrepository-not-live",
+      "inventory-closure-invalid",
+      "kustomization-not-live",
+      "owner-inventory-invalid",
+      "remote-build-dependency",
+      "unsupported-chart-source",
+      "unsupported-source-fields",
+      "unsupported-substitution",
+      "unsupported-values"
+    ],
+    "sample_valid": false,
+    "superseded": false
+  },
+  "local_render_fixture": true,
+  "name": "local-flux-render"
+}

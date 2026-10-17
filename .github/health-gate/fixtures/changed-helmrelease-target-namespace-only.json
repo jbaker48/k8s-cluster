@@ -1,0 +1,74 @@
+{
+  "base_fixture": "cas-unavailable-with-terminal-reconciliation-failure",
+  "name": "changed-helmrelease-target-namespace-only",
+  "poll_scenario": null,
+  "producer_expected": {
+    "candidate_count": 1,
+    "changed_inputs": true,
+    "diagnostic_codes": [
+      "baseline-missing",
+      "merge-cas-unavailable"
+    ],
+    "helmreleases_supported": 1,
+    "helmreleases_total": 1,
+    "helmreleases_unsupported": 0,
+    "reason_codes": {
+      "supported": 1
+    }
+  },
+  "producer_mutations": [
+    {
+      "path": [
+        "target_render",
+        4,
+        "spec",
+        "targetNamespace"
+      ],
+      "value": "media"
+    },
+    {
+      "path": [
+        "snapshot",
+        "before",
+        "helmreleases",
+        0,
+        "spec",
+        "targetNamespace"
+      ],
+      "value": "media"
+    },
+    {
+      "path": [
+        "snapshot",
+        "after",
+        "helmreleases",
+        0,
+        "spec",
+        "targetNamespace"
+      ],
+      "value": "media"
+    },
+    {
+      "path": [
+        "parent_render",
+        2,
+        "metadata",
+        "labels"
+      ],
+      "value": {
+        "kustomize.toolkit.fluxcd.io/name": "cluster-apps",
+        "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+      }
+    },
+    {
+      "path": [
+        "parent_render",
+        4,
+        "spec",
+        "values",
+        "replicas"
+      ],
+      "value": 2
+    }
+  ]
+}

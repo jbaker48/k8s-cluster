@@ -1,0 +1,27 @@
+{
+  "name": "newest-history-failed",
+  "base_fixture": "stable-supported-target",
+  "proof_mutations": [
+    {
+      "path": [
+        "proof",
+        "observed",
+        "helmreleases",
+        0,
+        "status",
+        "history",
+        0,
+        "status"
+      ],
+      "value": "failed"
+    }
+  ],
+  "expected": {
+    "all_ready": false,
+    "diagnostic_codes": [
+      "helm-attempt-not-settled"
+    ],
+    "sample_valid": true,
+    "superseded": false
+  }
+}

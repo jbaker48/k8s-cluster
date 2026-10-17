@@ -1,0 +1,27 @@
+{
+  "name": "newest-history-wrong-chart",
+  "base_fixture": "stable-supported-target",
+  "proof_mutations": [
+    {
+      "path": [
+        "proof",
+        "observed",
+        "helmreleases",
+        0,
+        "status",
+        "history",
+        0,
+        "chartVersion"
+      ],
+      "value": "1.2.4"
+    }
+  ],
+  "expected": {
+    "all_ready": false,
+    "diagnostic_codes": [
+      "helm-attempt-not-settled"
+    ],
+    "sample_valid": true,
+    "superseded": false
+  }
+}

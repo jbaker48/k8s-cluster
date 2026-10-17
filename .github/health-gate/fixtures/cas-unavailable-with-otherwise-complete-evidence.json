@@ -1,0 +1,37 @@
+{
+  "name": "cas-unavailable-with-otherwise-complete-evidence",
+  "base_fixture": "stable-supported-target",
+  "proof_mutations": [
+    {
+      "path": [
+        "proof",
+        "diagnostics"
+      ],
+      "value": [
+        {
+          "kind": "HelmRelease",
+          "namespace": "apps",
+          "name": "demo",
+          "code": "baseline-missing",
+          "reason": "rollback-prerequisite-unavailable"
+        },
+        {
+          "kind": "HelmRelease",
+          "namespace": "apps",
+          "name": "demo",
+          "code": "merge-cas-unavailable",
+          "reason": "rollback-prerequisite-unavailable"
+        }
+      ]
+    }
+  ],
+  "expected": {
+    "all_ready": true,
+    "diagnostic_codes": [
+      "baseline-missing",
+      "merge-cas-unavailable"
+    ],
+    "sample_valid": true,
+    "superseded": false
+  }
+}

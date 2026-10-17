@@ -431,6 +431,12 @@ required=(
   kustomization-live-metadata-mismatch
   candidate-wrong-sole-inventory-holder
   unknown-reconciling-condition
+  notify-real-root-shape
+  notify-missing-child-root-failure
+  notify-inactive-vs-unresolved-chain
+  notify-oci-source-failure
+  notify-helmrepository-helmchart-failure
+  notify-unreferenced-source-failure
 )
 
 fixture_count=0
@@ -451,6 +457,10 @@ for name in "${required[@]}"; do
 done
 
 passed=0
+notification_fixture_count=0
+notification_positive=0
+notification_negative=0
+notification_steps=0
 materialize_fixture() {
   local fixture=$1
   local destination=$2
@@ -474,6 +484,9 @@ materialize_fixture() {
 
 for fixture in "$FIXTURE_DIR"/*.json; do
   [ -f "$fixture" ] || continue
+  if jq -e 'has("poll_producer_failure")' "$fixture" >/dev/null; then
+    continue
+  fi
   name=$(jq -r '.name // empty' "$fixture")
   [ -n "$name" ] || {
     printf 'fixture has no name: %s\n' "${fixture##*/}" >&2
@@ -482,6 +495,58 @@ for fixture in "$FIXTURE_DIR"/*.json; do
   proof_file="$TMP_DIR/$name.proof.json"
   effective_fixture="$TMP_DIR/$name.fixture.json"
   materialize_fixture "$fixture" "$effective_fixture"
+  if jq -e '.notification_fixture == true' "$fixture" >/dev/null; then
+    notification_fixture_count=$((notification_fixture_count + 1))
+    previous_file="$TMP_DIR/$name.notification-previous.json"
+    jq -c '.previous // {}' "$fixture" > "$previous_file"
+    step_count=$(jq -r '.steps | length' "$fixture")
+    for ((step_index = 0; step_index < step_count; step_index++)); do
+      scope_file="$TMP_DIR/$name.notification-scope.json"
+      snapshots_file="$TMP_DIR/$name.notification-snapshots.json"
+      result_file="$TMP_DIR/$name.notification-result.json"
+      jq -c ".steps[$step_index].scope" "$fixture" > "$scope_file"
+      args=(--target-sha "$(jq -r '.target_sha' "$fixture")"
+        --scope "$scope_file" --previous "$previous_file"
+        --observed-at "$(jq -r ".steps[$step_index].observed_at // \"2026-10-12T00:00:00Z\"" "$fixture")")
+      if jq -e ".steps[$step_index].snapshots != null" "$fixture" >/dev/null; then
+        jq -c ".steps[$step_index].snapshots" "$fixture" > "$snapshots_file"
+        args+=(--snapshots "$snapshots_file")
+      fi
+      if [ "$(jq -r ".steps[$step_index].observation_error // false" "$fixture")" = true ]; then
+        args+=(--observation-error)
+      fi
+      python3 -B "$ROOT/scripts/health-gate-flux-status.py" "${args[@]}" > "$result_file"
+      expected_file="$TMP_DIR/$name.notification-expected.json"
+      jq -c ".steps[$step_index].expected" "$fixture" > "$expected_file"
+      if ! jq -e --slurpfile expected "$expected_file" '
+        .flux_unhealthy == $expected[0].flux_unhealthy
+        and .flux_notification_evidence == $expected[0].evidence
+        and .flux_notification_scope == $expected[0].scope
+        and .evidence_time == $expected[0].evidence_time
+        and .diagnostics == $expected[0].diagnostics
+        and ([.flux_unhealthy_objects[]
+              | {kind,namespace,name,uid,generation,condition,status,reason,
+                 ks_target_revision,owner_identity,observation_time,target_sha}]
+             == $expected[0].objects)
+        and ((if .flux_unhealthy then "Warning" else "Normal" end)
+             == $expected[0].event_type)
+        and all(.flux_unhealthy_objects[]; has("message") | not)
+      ' "$result_file" >/dev/null; then
+        printf 'notification helper fixture failed: %s step=%s actual=%s expected=%s\n' \
+          "$name" "$step_index" "$(jq -c . "$result_file")" "$(jq -c . "$expected_file")" >&2
+        exit 1
+      fi
+      if [ "$(jq -r '.flux_unhealthy' "$result_file")" = true ]; then
+        notification_positive=$((notification_positive + 1))
+      else
+        notification_negative=$((notification_negative + 1))
+      fi
+      notification_steps=$((notification_steps + 1))
+      cp -f "$result_file" "$previous_file"
+    done
+    passed=$((passed + 1))
+    continue
+  fi
   if jq -e 'has("preflight_cases")' "$fixture" >/dev/null; then
     target_sha=$(jq -r '.target_sha' "$fixture")
     parent_sha=$(jq -r '.parent_sha' "$fixture")
@@ -574,6 +639,9 @@ if [ "$passed" -eq 0 ]; then
   exit 2
 fi
 printf 'passed %s health-gate fixtures\n' "$passed"
+printf 'passed %s notification fixtures across %s observations (positive=%s negative=%s)\n' \
+  "$notification_fixture_count" "$notification_steps" \
+  "$notification_positive" "$notification_negative"
 
 REAL_PYTHON3=$(command -v python3)
 REAL_JQ=$(command -v jq)
@@ -637,6 +705,14 @@ case "$tool" in
           ;;
         malformed) trace "kubectl-get-malformed:$resource"; printf '{invalid-json'; exit 0 ;;
         list) trace "kubectl-get:$resource"; printf '{"apiVersion":"v1","kind":"List","items":[]}\n'; exit 0 ;;
+        raw)
+          count=$(<"$POLL_STATE/kubectl-count")
+          if [ "$(( (count - 1) % 12 ))" -lt 6 ]; then phase=before; else phase=after; fi
+          trace "kubectl-get:$resource"
+          "$REAL_JQ" -c --arg phase "$phase" --arg resource "$resource" \
+            '.[$phase][$resource]' "$POLL_RAW_SNAPSHOT"
+          exit 0
+          ;;
         *) trace "kubectl-get-invalid-response:$resource"; exit 97 ;;
       esac
     fi
@@ -664,7 +740,11 @@ case "$tool" in
         ;;
       diff)
         trace git-diff
-        printf '%s\n' kubernetes/apps/demo/app/helmrelease.yaml
+        if [ -n "${POLL_CHANGED_PATHS:-}" ] && [ -f "$POLL_CHANGED_PATHS" ]; then
+          cat "$POLL_CHANGED_PATHS"
+        else
+          printf '%s\n' kubernetes/apps/demo/app/helmrelease.yaml
+        fi
         ;;
       *) trace git-unexpected; exit 96 ;;
     esac
@@ -672,7 +752,7 @@ case "$tool" in
   date)
     if [ "${1:-}" = -u ]; then
       trace clock-utc
-      printf '%s\n' 2026-10-11T00:00:00Z
+      printf '%s\n' "${POLL_OBSERVED_AT:-2026-10-11T00:00:00Z}"
     else
       response=$(next_response "$POLL_CLOCK_RESPONSES" date-count)
       trace "clock:$response"
@@ -704,9 +784,17 @@ case "$tool" in
   jq)
     classifier=false
     preservation=false
+    expect_json_var=false
     for arg in "$@"; do
-      [ "$arg" = superseded ] && classifier=true
-      [ "$arg" = observed_superseded ] && preservation=true
+      if [ "$expect_json_var" = true ]; then
+        case "$arg" in
+          superseded) classifier=true ;;
+          observed_superseded) preservation=true ;;
+        esac
+        expect_json_var=false
+      elif [ "$arg" = --argjson ]; then
+        expect_json_var=true
+      fi
     done
     if [ "$preservation" = true ] \
       && [ "$POLL_SCENARIO" = wall-deadline-preservation-jq-error ]; then
@@ -774,6 +862,7 @@ for fixture in "$FIXTURE_DIR"/*.json; do
   export POLL_PRODUCER_RESPONSES="$poll_dir/producer.responses" POLL_JQ_RESPONSES="$poll_dir/classifier.responses"
   export POLL_CLOCK_RESPONSES="$poll_dir/clock.responses"
   export POLL_PARENT_SHA="$parent_sha" GITHUB_SHA="$target_sha" GITHUB_REPOSITORY=fixture/repo
+  export GITHUB_SERVER_URL=https://github.invalid
   export GITHUB_WORKSPACE="$ROOT" GITHUB_RUN_ID=fixture-run RUNNER_TEMP="$poll_dir/runner"
   export HEALTH_GATE_PARENT_SHA="$parent_sha"
   export HEALTH_GATE_PARENT_ROOT="$poll_dir/runner/parent"
@@ -830,21 +919,34 @@ for fixture in "$FIXTURE_DIR"/*.json; do
     exit 1
   fi
   if [ "$outcome" = inconclusive ]; then
-    PATH="$STUB_DIR:$PATH" RESULT="$result" GITHUB_SHA="$GITHUB_SHA" \
-      bash -euo pipefail "$TMP_DIR/notify-inconclusive.sh" > "$poll_dir/notify.stdout" 2> "$poll_dir/notify.stderr"
-    if [ ! -s "$POLL_EVENT" ] || ! grep -Fq 'reason: HealthGateInconclusive' "$POLL_EVENT"; then
+    latest_output() { awk -F= -v key="$1" '$1 == key { value = substr($0, length(key) + 2) } END { print value }' "$GITHUB_OUTPUT"; }
+    if ! PATH="$STUB_DIR:$PATH" RESULT="$result" GITHUB_SHA="$GITHUB_SHA" \
+      FLUX_UNHEALTHY="$(latest_output flux_unhealthy)" \
+      FLUX_UNHEALTHY_OBJECTS="$(latest_output flux_unhealthy_objects)" \
+      FLUX_NOTIFICATION_EVIDENCE="$(latest_output flux_notification_evidence)" \
+      FLUX_NOTIFICATION_SCOPE="$(latest_output flux_notification_scope)" \
+      FLUX_EVIDENCE_TIME="$(latest_output flux_evidence_time)" \
+      bash -euo pipefail "$TMP_DIR/notify-inconclusive.sh" \
+      > "$poll_dir/notify.stdout" 2> "$poll_dir/notify.stderr"; then
+      printf 'extracted inconclusive notification failed: %s\n' "$name" >&2
+      tail -n 40 "$poll_dir/notify.stderr" >&2 || true
+      exit 1
+    fi
+    if [ ! -s "$POLL_EVENT" ] || ! "$REAL_JQ" -e \
+      '.reason == "HealthGateInconclusive" and .type == "Normal"' \
+      "$POLL_EVENT" >/dev/null; then
       printf 'inconclusive notification was not emitted by extracted shell: %s\n' "$name" >&2
       exit 1
     fi
     while IFS= read -r code; do
       [ -n "$code" ] || continue
-      grep -Fq "$code" "$POLL_EVENT" || {
+      "$REAL_JQ" -r '.message' "$POLL_EVENT" | grep -Fq "$code" || {
         printf 'inconclusive Event omitted expected reason %s: %s\n' "$code" "$name" >&2
         exit 1
       }
     done < <(jq -r '(.poll_expected.diagnostic_codes // .expected.diagnostic_codes // [])[]?' "$poll_effective_fixture")
   fi
-  trace_json=$("$REAL_PYTHON3" - "$POLL_TRACE" <<'PYTHON'
+  trace_json=$("$REAL_PYTHON3" - "$POLL_TRACE" "$POLL_EVENT" <<'PYTHON'
 import json
 import pathlib
 import sys
@@ -853,8 +955,17 @@ resources = ("kustomizations", "helmreleases", "gitrepositories", "ocirepositori
 complete = [f"kubectl-get:{name}" for name in resources]
 normalized = []
 position = 0
+scope_diff_seen = False
+event_created = pathlib.Path(sys.argv[2]).is_file() and pathlib.Path(sys.argv[2]).stat().st_size > 0
+event_timestamp = max((index for index, event in enumerate(events) if event == "clock-utc"), default=-1) if event_created else -1
 while position < len(events):
-    if events[position:position + len(complete)] == complete:
+    if events[position] == "clock-utc" and position != event_timestamp:
+        position += 1
+        continue
+    if events[position] == "git-diff" and not scope_diff_seen:
+        scope_diff_seen = True
+        position += 1
+    elif events[position:position + len(complete)] == complete:
         normalized.append("kubectl-snapshot")
         position += len(complete)
     else:
@@ -894,6 +1005,271 @@ if [ "$poll_cases" -eq 0 ]; then
   printf 'zero extracted poll shell scenarios were executed\n' >&2
   exit 2
 fi
+
+notification_poll_fixture="$FIXTURE_DIR/notify-ks-ready-false-target.json"
+notification_poll_dir="$TMP_DIR/notification-poll"
+mkdir -p "$notification_poll_dir/state" "$notification_poll_dir/runner/parent"
+notification_raw_snapshot="$notification_poll_dir/raw-snapshot.json"
+notification_paths="$notification_poll_dir/changed-paths"
+jq -c '.steps[0].snapshots' "$notification_poll_fixture" > "$notification_raw_snapshot"
+jq -r '.steps[0].scope.changed_paths[]' "$notification_poll_fixture" > "$notification_paths"
+for _ in {1..12}; do printf '%s\n' raw; done > "$notification_poll_dir/kubectl.responses"
+printf '%s\n' target target > "$notification_poll_dir/main.responses"
+printf '%s\n' 100 100 160 > "$notification_poll_dir/clock.responses"
+: > "$notification_poll_dir/producer.responses"
+: > "$notification_poll_dir/classifier.responses"
+export REAL_PYTHON3 REAL_JQ REAL_SLEEP POLL_SCENARIO=notification-render-failed
+export POLL_TRACE="$notification_poll_dir/trace" POLL_STATE="$notification_poll_dir/state"
+export POLL_EVENT="$notification_poll_dir/event.json" POLL_RAW_SNAPSHOT="$notification_raw_snapshot"
+export POLL_CHANGED_PATHS="$notification_paths"
+export POLL_MAIN_RESPONSES="$notification_poll_dir/main.responses"
+export POLL_KUBECTL_RESPONSES="$notification_poll_dir/kubectl.responses"
+export POLL_PRODUCER_RESPONSES="$notification_poll_dir/producer.responses"
+export POLL_JQ_RESPONSES="$notification_poll_dir/classifier.responses"
+export POLL_CLOCK_RESPONSES="$notification_poll_dir/clock.responses"
+POLL_PARENT_SHA=$(printf 'b%.0s' {1..40})
+GITHUB_SHA=$(jq -r '.target_sha' "$notification_poll_fixture")
+export GITHUB_REPOSITORY=fixture/repo GITHUB_SERVER_URL=https://github.invalid GITHUB_RUN_ID=fixture-run
+export GITHUB_WORKSPACE="$ROOT" RUNNER_TEMP="$notification_poll_dir/runner"
+export HEALTH_GATE_PARENT_SHA="$POLL_PARENT_SHA"
+export HEALTH_GATE_PARENT_ROOT="$notification_poll_dir/runner/parent"
+export HEALTH_GATE_RENDER_CACHE="$notification_poll_dir/runner/render-cache.json"
+export HEALTH_GATE_RENDER_STATUS=failed HEALTH_GATE_JOB_STARTED_AT=100 WINDOW_SECONDS=60
+POLL_OBSERVED_AT=$(jq -r '.steps[0].observed_at' "$notification_poll_fixture")
+export POLL_PARENT_SHA GITHUB_SHA POLL_OBSERVED_AT
+export GITHUB_OUTPUT="$notification_poll_dir/output" GITHUB_STEP_SUMMARY="$notification_poll_dir/summary"
+: > "$GITHUB_OUTPUT"
+: > "$GITHUB_STEP_SUMMARY"
+: > "$POLL_TRACE"
+: > "$POLL_EVENT"
+if ! PATH="$STUB_DIR:$PATH" bash -euo pipefail "$TMP_DIR/poll.sh" \
+  > "$notification_poll_dir/stdout" 2> "$notification_poll_dir/stderr"; then
+  printf 'raw notification poll fixture failed with desired-state render disabled\n' >&2
+  tail -n 12 "$notification_poll_dir/stderr" >&2 || true
+  cat "$POLL_TRACE" >&2
+  exit 1
+fi
+notification_output() {
+  local key=$1
+  awk -F= -v key="$key" '$1 == key { value = substr($0, length(key) + 2) } END { print value }' "$GITHUB_OUTPUT"
+}
+notification_expected=$(jq -c '.steps[0].expected' "$notification_poll_fixture")
+notification_poll_diagnostics=$(awk '/^diagnostics<<HEALTHGATEEOF$/ { inside=1; next } inside && /^HEALTHGATEEOF$/ { exit } inside { print }' "$GITHUB_OUTPUT")
+if [ "$(notification_output flux_unhealthy)" != true ] \
+  || [ "$(notification_output flux_notification_evidence)" != valid ] \
+  || [ "$(notification_output flux_notification_scope)" != "apps:demo/app" ] \
+  || [ "$(notification_output outcome)" != inconclusive ] \
+  || [ "$(notification_output rollback_authorized)" != false ] \
+  || [ "$(notification_output stalled_or_failed)" != '[]' ] \
+  || ! printf '%s' "$notification_poll_diagnostics" | "$REAL_JQ" -e \
+    'any(.diagnostics[]?; .code == "render-cache-unavailable")' >/dev/null \
+  || [ "$(<"$POLL_STATE/kubectl-count")" != 12 ] \
+  || [ "$(<"$POLL_STATE/gh-count")" != 2 ]; then
+  printf 'raw poll outputs, render-failure diagnostics or bounded read counts mismatched: outputs=%s\n' \
+    "$(cat "$GITHUB_OUTPUT")" >&2
+  cat "$notification_poll_dir/stdout" "$notification_poll_dir/stderr" >&2
+  cat "$POLL_TRACE" >&2
+  exit 1
+fi
+# shellcheck disable=SC2016
+if ! printf '%s' "$(notification_output flux_unhealthy_objects)" | "$REAL_JQ" -e \
+  --argjson expected "$(jq -c '.objects' <<< "$notification_expected")" '
+  [.[] | {kind,namespace,name,uid,generation,condition,status,reason,
+          ks_target_revision,owner_identity,observation_time,target_sha}] == $expected
+' >/dev/null; then
+  printf 'raw poll object output did not match the fixture\n' >&2
+  exit 1
+fi
+if ! grep -Fq \
+  'Flux notification: paging; scope=apps:demo/app; evidence=valid; objects=1; target='"$GITHUB_SHA" \
+  "$GITHUB_STEP_SUMMARY"; then
+  printf 'raw poll summary omitted the paging policy line\n' >&2
+  cat "$GITHUB_STEP_SUMMARY" >&2
+  exit 1
+fi
+PATH="$STUB_DIR:$PATH" GITHUB_SHA="$GITHUB_SHA" GITHUB_SERVER_URL="$GITHUB_SERVER_URL" \
+  GITHUB_REPOSITORY="$GITHUB_REPOSITORY" GITHUB_RUN_ID="$GITHUB_RUN_ID" \
+  RESULT='{"diagnostics":[]}' FLUX_UNHEALTHY="$(notification_output flux_unhealthy)" \
+  FLUX_UNHEALTHY_OBJECTS="$(notification_output flux_unhealthy_objects)" \
+  FLUX_NOTIFICATION_EVIDENCE="$(notification_output flux_notification_evidence)" \
+  FLUX_NOTIFICATION_SCOPE="$(notification_output flux_notification_scope)" \
+  FLUX_EVIDENCE_TIME="$(notification_output flux_evidence_time)" \
+  bash -euo pipefail "$TMP_DIR/notify-inconclusive.sh" \
+  > "$notification_poll_dir/notify.stdout" 2> "$notification_poll_dir/notify.stderr"
+# shellcheck disable=SC2016
+if ! "$REAL_JQ" -e --arg target "$GITHUB_SHA" \
+  --arg url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+  --arg time "$(notification_output flux_evidence_time)" '
+  .reason == "HealthGateInconclusive" and .type == "Warning"
+  and .involvedObject.kind == "Kustomization"
+  and .involvedObject.name == "cluster-apps"
+  and (.message | contains($target) and contains($url)
+       and contains("apps:demo/app") and contains($time)
+       and contains("app-owner") and contains("Ready=False")
+       and contains("No rollback authorized"))
+' "$POLL_EVENT" >/dev/null; then
+  printf 'raw notification Event did not contain the qualified current failure evidence\n' >&2
+  cat "$POLL_EVENT" >&2
+  exit 1
+fi
+printf 'passed raw extracted poll shell with render disabled: kubectl reads=12, main reads=2, Event=Warning\n'
+
+producer_failure_fixture="$FIXTURE_DIR/notify-producer-failure-poll.json"
+producer_source="$FIXTURE_DIR/$(jq -r '.poll_producer_failure.source_fixture' "$producer_failure_fixture")"
+producer_proof_source="$FIXTURE_DIR/$(jq -r '.poll_producer_failure.health_proof_fixture' "$producer_failure_fixture")"
+producer_failure_cases=$(jq -r '.poll_producer_failure.cases | length' "$producer_failure_fixture")
+for ((producer_case_index = 0; producer_case_index < producer_failure_cases; producer_case_index++)); do
+  producer_case=$(jq -c ".poll_producer_failure.cases[$producer_case_index]" "$producer_failure_fixture")
+  producer_case_name=$(jq -r '.name' <<< "$producer_case")
+  producer_case_dir="$TMP_DIR/$producer_case_name"
+  mkdir -p "$producer_case_dir/state" "$producer_case_dir/runner/parent"
+  jq -c '.steps[0].snapshots' "$producer_source" > "$producer_case_dir/raw-snapshot.json"
+  jq -r '.steps[0].scope.changed_paths[]' "$producer_source" > "$producer_case_dir/changed-paths"
+  jq -r '.main_responses[]' <<< "$producer_case" > "$producer_case_dir/main.responses"
+  jq -r '.producer_responses[]' <<< "$producer_case" > "$producer_case_dir/producer.responses"
+  jq -r '.clock_responses[]' <<< "$producer_case" > "$producer_case_dir/clock.responses"
+  jq -r '.classifier_responses[]?' <<< "$producer_case" > "$producer_case_dir/classifier.responses"
+  producer_case_cluster_reads=$(jq -r '.cluster_reads' <<< "$producer_case")
+  for ((read_index = 0; read_index < producer_case_cluster_reads; read_index++)); do
+    printf '%s\n' raw
+  done > "$producer_case_dir/kubectl.responses"
+  jq -c '.proof' "$producer_proof_source" > "$producer_case_dir/proof.json"
+  export REAL_PYTHON3 REAL_JQ REAL_SLEEP POLL_SCENARIO=producer-error
+  export POLL_TRACE="$producer_case_dir/trace" POLL_STATE="$producer_case_dir/state"
+  export POLL_EVENT="$producer_case_dir/event.json" POLL_PROOF="$producer_case_dir/proof.json"
+  export POLL_RAW_SNAPSHOT="$producer_case_dir/raw-snapshot.json"
+  export POLL_CHANGED_PATHS="$producer_case_dir/changed-paths"
+  export POLL_MAIN_RESPONSES="$producer_case_dir/main.responses"
+  export POLL_KUBECTL_RESPONSES="$producer_case_dir/kubectl.responses"
+  export POLL_PRODUCER_RESPONSES="$producer_case_dir/producer.responses"
+  export POLL_JQ_RESPONSES="$producer_case_dir/classifier.responses"
+  export POLL_CLOCK_RESPONSES="$producer_case_dir/clock.responses"
+  POLL_PARENT_SHA=$(jq -r '.proof.parent_sha' "$producer_proof_source")
+  GITHUB_SHA=$(jq -r '.target_sha' "$producer_source")
+  export POLL_PARENT_SHA GITHUB_SHA GITHUB_REPOSITORY=fixture/repo
+  export GITHUB_SERVER_URL=https://github.invalid GITHUB_RUN_ID=fixture-run
+  export GITHUB_WORKSPACE="$ROOT" RUNNER_TEMP="$producer_case_dir/runner"
+  export HEALTH_GATE_PARENT_SHA="$POLL_PARENT_SHA"
+  export HEALTH_GATE_PARENT_ROOT="$producer_case_dir/runner/parent"
+  export HEALTH_GATE_RENDER_CACHE="$producer_case_dir/runner/render-cache.json"
+  export HEALTH_GATE_RENDER_STATUS=ready HEALTH_GATE_JOB_STARTED_AT=100 WINDOW_SECONDS=60
+  printf '{}\n' > "$HEALTH_GATE_RENDER_CACHE"
+  POLL_OBSERVED_AT=$(jq -r '.steps[0].observed_at' "$producer_source")
+  export POLL_OBSERVED_AT
+  export GITHUB_OUTPUT="$producer_case_dir/output" GITHUB_STEP_SUMMARY="$producer_case_dir/summary"
+  : > "$GITHUB_OUTPUT"
+  : > "$GITHUB_STEP_SUMMARY"
+  : > "$POLL_TRACE"
+  if ! PATH="$STUB_DIR:$PATH" bash -euo pipefail "$TMP_DIR/poll.sh" \
+    > "$producer_case_dir/stdout" 2> "$producer_case_dir/stderr"; then
+    printf 'producer-failure poll fixture failed: %s\n' "$producer_case_name" >&2
+    tail -n 12 "$producer_case_dir/stderr" >&2 || true
+    cat "$POLL_TRACE" >&2
+    exit 1
+  fi
+  producer_expected=$(jq -c '.expected' <<< "$producer_case")
+  producer_expected_unhealthy=$(jq -r '.flux_unhealthy' <<< "$producer_expected")
+  producer_expected_evidence=$(jq -r '.flux_notification_evidence' <<< "$producer_expected")
+  producer_expected_scope=$(jq -r '.flux_notification_scope' <<< "$producer_expected")
+  producer_expected_event=$(jq -r '.event_type' <<< "$producer_expected")
+  if [ "$(notification_output flux_unhealthy)" != "$producer_expected_unhealthy" ] \
+    || [ "$(notification_output flux_notification_evidence)" != "$producer_expected_evidence" ] \
+    || [ "$(notification_output flux_notification_scope)" != "$producer_expected_scope" ] \
+    || [ "$(notification_output outcome)" != inconclusive ] \
+    || [ "$(notification_output rollback_authorized)" != false ] \
+    || [ "$(notification_output stalled_or_failed)" != '[]' ] \
+    || [ "$(<"$POLL_STATE/kubectl-count")" != "$(jq -r '.cluster_reads' <<< "$producer_case")" ] \
+    || [ "$(<"$POLL_STATE/gh-count")" != "$(jq -r '.main_reads' <<< "$producer_case")" ]; then
+    printf 'producer-failure outputs or bounded read counts mismatched: %s outputs=%s\n' \
+      "$producer_case_name" "$(cat "$GITHUB_OUTPUT")" >&2
+    cat "$POLL_TRACE" >&2
+    exit 1
+  fi
+  if [ "$producer_expected_unhealthy" = true ]; then
+    producer_expected_objects=$(jq -c '.steps[0].expected.objects' "$producer_source")
+    producer_expected_time=$(jq -r '.steps[0].expected.evidence_time' "$producer_source")
+    if [ "$(notification_output flux_evidence_time)" != "$producer_expected_time" ]; then
+      printf 'producer failure changed the previously confirmed evidence time: %s\n' \
+        "$producer_case_name" >&2
+      cat "$GITHUB_OUTPUT" >&2
+      exit 1
+    fi
+    # shellcheck disable=SC2016
+    if ! printf '%s' "$(notification_output flux_unhealthy_objects)" | "$REAL_JQ" -e \
+        --argjson expected "$producer_expected_objects" '
+        [.[] | {kind,namespace,name,uid,generation,condition,status,reason,
+                ks_target_revision,owner_identity,observation_time,target_sha}] == $expected
+      ' >/dev/null; then
+      printf 'producer failure did not retain the previously confirmed evidence: %s\n' \
+        "$producer_case_name" >&2
+      cat "$GITHUB_OUTPUT" >&2
+      exit 1
+    fi
+    producer_page_status=paging
+    producer_object_count=1
+  else
+    if [ "$(notification_output flux_evidence_time)" != '' ] \
+      || [ "$(notification_output flux_unhealthy_objects)" != '[]' ]; then
+      printf 'producer failure manufactured Flux evidence without a prior observation: %s\n' \
+        "$producer_case_name" >&2
+      cat "$GITHUB_OUTPUT" >&2
+      exit 1
+    fi
+    producer_page_status=non-paging
+    producer_object_count=0
+  fi
+  producer_summary="Flux notification: $producer_page_status; scope=$producer_expected_scope; evidence=$producer_expected_evidence; objects=$producer_object_count; target=$GITHUB_SHA"
+  if ! grep -Fq "$producer_summary" "$GITHUB_STEP_SUMMARY"; then
+    printf 'producer-failure summary omitted retained notification state: %s\n' \
+      "$producer_case_name" >&2
+    cat "$GITHUB_STEP_SUMMARY" >&2
+    exit 1
+  fi
+  poll_result=$(awk '/^diagnostics<<HEALTHGATEEOF$/ { inside=1; next } inside && /^HEALTHGATEEOF$/ { exit } inside { print }' "$GITHUB_OUTPUT")
+  if ! PATH="$STUB_DIR:$PATH" RESULT="$poll_result" GITHUB_SHA="$GITHUB_SHA" \
+    FLUX_UNHEALTHY="$(notification_output flux_unhealthy)" \
+    FLUX_UNHEALTHY_OBJECTS="$(notification_output flux_unhealthy_objects)" \
+    FLUX_NOTIFICATION_EVIDENCE="$(notification_output flux_notification_evidence)" \
+    FLUX_NOTIFICATION_SCOPE="$(notification_output flux_notification_scope)" \
+    FLUX_EVIDENCE_TIME="$(notification_output flux_evidence_time)" \
+    bash -euo pipefail "$TMP_DIR/notify-inconclusive.sh" \
+    > "$producer_case_dir/notify.stdout" 2> "$producer_case_dir/notify.stderr"; then
+    printf 'producer-failure notification shell failed: %s\n' "$producer_case_name" >&2
+    cat "$producer_case_dir/notify.stderr" >&2
+    exit 1
+  fi
+  # shellcheck disable=SC2016
+  if ! "$REAL_JQ" -e --arg event_type "$producer_expected_event" \
+    --arg scope "$producer_expected_scope" --arg evidence "$producer_expected_evidence" '
+      .reason == "HealthGateInconclusive" and .type == $event_type
+      and (if $event_type == "Warning" then
+             (.message | contains($scope) and contains($evidence)
+              and contains("Ready=False") and contains("No rollback authorized"))
+           else
+             (.message | contains("no qualifying current Flux failure")
+              and contains("notification evidence=unavailable"))
+           end)
+    ' "$POLL_EVENT" >/dev/null; then
+    printf 'producer-failure Event type or message mismatched: %s\n' "$producer_case_name" >&2
+    cat "$POLL_EVENT" >&2
+    exit 1
+  fi
+  "$REAL_PYTHON3" - "$POLL_TRACE" <<'PYTHON'
+import pathlib
+import sys
+events = pathlib.Path(sys.argv[1]).read_text().splitlines()
+failures = [index for index, event in enumerate(events) if event == "producer-error"]
+if len(failures) != 1:
+    raise SystemExit(f"expected one producer failure, observed {len(failures)}")
+tail = events[failures[-1] + 1:]
+if any(event.startswith("gh-main-") or event.startswith("kubectl-get:")
+       or event.startswith("kubectl-get-error:") for event in tail):
+    raise SystemExit(f"reads continued after producer failure: {tail}")
+PYTHON
+done
+printf 'passed %s producer-failure poll cases: prior Warning retained; no prior evidence Normal; no post-failure cluster/main reads\n' \
+  "$producer_failure_cases"
+
 if [ -z "$backstop_fixture_dir" ]; then
   printf 'no extracted post-auth failure backstop fixture was executed\n' >&2
   exit 2
@@ -920,15 +1296,49 @@ if ! PATH="$STUB_DIR:$PATH" POLL_OUTCOME=none \
 fi
 if ! grep -Fq '::error title=Health gate did not reach a verdict::' \
   "$backstop_fixture_dir/backstop.stdout" \
-  || ! grep -Fq 'reason: HealthGateInconclusive' "$POLL_EVENT" \
-  || ! grep -Fq 'name: health-gate-inconclusive-backstop-fixture-run' "$POLL_EVENT" \
-  || ! grep -Fq 'name: cluster-apps' "$POLL_EVENT" \
-  || ! grep -Fq 'namespace: flux-system' "$POLL_EVENT"; then
+  || ! "$REAL_JQ" -e '
+       .reason == "HealthGateInconclusive" and .type == "Normal"
+       and .metadata.name == "health-gate-inconclusive-backstop-fixture-run"
+       and .involvedObject.name == "cluster-apps"
+       and .involvedObject.namespace == "flux-system"
+       and (.message | contains("No qualifying current Flux failure")
+            and contains("notification evidence=unavailable"))
+     ' "$POLL_EVENT" >/dev/null; then
   printf 'post-auth backstop did not emit its annotation and HealthGateInconclusive Event\n' >&2
   exit 1
 fi
 if ! grep -Fxq 'kubectl-create-event' "$POLL_TRACE"; then
   printf 'post-auth backstop did not attempt Kubernetes Event creation\n' >&2
+  exit 1
+fi
+backstop_policy_fixture="$FIXTURE_DIR/notify-backstop-before-verdict.json"
+backstop_objects=$(jq -c '.steps[1].expected.objects' "$backstop_policy_fixture")
+: > "$POLL_EVENT"
+: > "$POLL_TRACE"
+if ! PATH="$STUB_DIR:$PATH" POLL_OUTCOME=inconclusive FLUX_UNHEALTHY=true \
+  FLUX_UNHEALTHY_OBJECTS="$backstop_objects" \
+  FLUX_NOTIFICATION_EVIDENCE=valid FLUX_NOTIFICATION_SCOPE=apps:demo/app \
+  FLUX_EVIDENCE_TIME="$(jq -r '.steps[1].observed_at' "$backstop_policy_fixture")" \
+  bash -euo pipefail "$TMP_DIR/backstop.sh" \
+  > "$backstop_fixture_dir/backstop-warning.stdout" \
+  2> "$backstop_fixture_dir/backstop-warning.stderr"; then
+  printf 'extracted evidence-backed backstop fixture failed\n' >&2
+  cat "$backstop_fixture_dir/backstop-warning.stderr" >&2
+  exit 1
+fi
+# shellcheck disable=SC2016
+if ! "$REAL_JQ" -e --arg sha "$GITHUB_SHA" '
+  .reason == "HealthGateInconclusive" and .type == "Warning"
+  and (.message | contains($sha) and contains("apps:demo/app")
+       and contains("app-owner") and contains("Ready=False")
+       and contains("No rollback authorized"))
+' "$POLL_EVENT" >/dev/null \
+  || ! grep -Fq 'Flux failure evidence at' \
+    "$backstop_fixture_dir/backstop-warning.stdout" \
+  || grep -Fq 'kubectl-get:' "$POLL_TRACE"; then
+  printf 'evidence-backed backstop Event was not Warning or performed an extra read\n' >&2
+  cat "$POLL_EVENT" >&2
+  cat "$POLL_TRACE" >&2
   exit 1
 fi
 printf 'passed %s extracted workflow poll shell scenarios with command stubs\n' "$poll_cases"

@@ -1,0 +1,624 @@
+{
+  "name": "notify-suspended-object",
+  "notification_fixture": true,
+  "steps": [
+    {
+      "expected": {
+        "diagnostics": [],
+        "event_type": "Normal",
+        "evidence": "valid",
+        "evidence_time": "",
+        "flux_unhealthy": false,
+        "objects": [],
+        "scope": "apps:demo/app"
+      },
+      "observed_at": "2026-10-12T01:02:03Z",
+      "scope": {
+        "changed_paths": [
+          "kubernetes/apps/demo/app/helmrelease.yaml"
+        ]
+      },
+      "snapshots": {
+        "after": {
+          "gitrepositories": {
+            "apiVersion": "v1",
+            "items": [
+              {
+                "apiVersion": "source.toolkit.fluxcd.io/v1",
+                "kind": "GitRepository",
+                "metadata": {
+                  "generation": 1,
+                  "name": "home-kubernetes",
+                  "namespace": "flux-system",
+                  "uid": "uid-git-home-kubernetes"
+                },
+                "spec": {
+                  "suspend": false,
+                  "url": "https://example.invalid/repo"
+                },
+                "status": {
+                  "conditions": [
+                    {
+                      "observedGeneration": 1,
+                      "status": "True",
+                      "type": "Ready"
+                    }
+                  ]
+                }
+              }
+            ],
+            "kind": "List"
+          },
+          "helmcharts": {
+            "apiVersion": "v1",
+            "items": [],
+            "kind": "List"
+          },
+          "helmreleases": {
+            "apiVersion": "v1",
+            "items": [
+              {
+                "apiVersion": "helm.toolkit.fluxcd.io/v2",
+                "kind": "HelmRelease",
+                "metadata": {
+                  "generation": 1,
+                  "labels": {
+                    "kustomize.toolkit.fluxcd.io/name": "app-owner",
+                    "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+                  },
+                  "name": "demo",
+                  "namespace": "apps",
+                  "uid": "uid-hr-demo"
+                },
+                "spec": {
+                  "suspend": true
+                },
+                "status": {
+                  "conditions": [
+                    {
+                      "observedGeneration": 1,
+                      "reason": "UpgradeFailed",
+                      "status": "False",
+                      "type": "Ready"
+                    }
+                  ],
+                  "lastAttemptedGeneration": 1,
+                  "observedGeneration": 1
+                }
+              }
+            ],
+            "kind": "List"
+          },
+          "helmrepositories": {
+            "apiVersion": "v1",
+            "items": [],
+            "kind": "List"
+          },
+          "kustomizations": {
+            "apiVersion": "v1",
+            "items": [
+              {
+                "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+                "kind": "Kustomization",
+                "metadata": {
+                  "generation": 1,
+                  "labels": {
+                    "kustomize.toolkit.fluxcd.io/name": "cluster",
+                    "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+                  },
+                  "name": "cluster",
+                  "namespace": "flux-system",
+                  "uid": "uid-ks-cluster"
+                },
+                "spec": {
+                  "path": "./kubernetes/flux",
+                  "sourceRef": {
+                    "kind": "GitRepository",
+                    "name": "home-kubernetes",
+                    "namespace": "flux-system"
+                  },
+                  "suspend": false
+                },
+                "status": {
+                  "conditions": [
+                    {
+                      "observedGeneration": 1,
+                      "status": "True",
+                      "type": "Ready"
+                    }
+                  ],
+                  "inventory": {
+                    "entries": [
+                      {
+                        "id": "flux-system_cluster_kustomize.toolkit.fluxcd.io_Kustomization"
+                      },
+                      {
+                        "id": "flux-system_cluster-apps_kustomize.toolkit.fluxcd.io_Kustomization"
+                      }
+                    ]
+                  },
+                  "lastAppliedRevision": "main@sha1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "lastAttemptedRevision": "main@sha1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "observedGeneration": 1
+                }
+              },
+              {
+                "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+                "kind": "Kustomization",
+                "metadata": {
+                  "generation": 1,
+                  "labels": {
+                    "kustomize.toolkit.fluxcd.io/name": "cluster",
+                    "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+                  },
+                  "name": "cluster-apps",
+                  "namespace": "flux-system",
+                  "uid": "uid-ks-cluster-apps"
+                },
+                "spec": {
+                  "path": "./kubernetes/apps",
+                  "sourceRef": {
+                    "kind": "GitRepository",
+                    "name": "home-kubernetes",
+                    "namespace": "flux-system"
+                  },
+                  "suspend": false
+                },
+                "status": {
+                  "conditions": [
+                    {
+                      "observedGeneration": 1,
+                      "status": "True",
+                      "type": "Ready"
+                    }
+                  ],
+                  "inventory": {
+                    "entries": [
+                      {
+                        "id": "flux-system_app-owner_kustomize.toolkit.fluxcd.io_Kustomization"
+                      },
+                      {
+                        "id": "flux-system_other-owner_kustomize.toolkit.fluxcd.io_Kustomization"
+                      },
+                      {
+                        "id": "flux-system_new-owner_kustomize.toolkit.fluxcd.io_Kustomization"
+                      }
+                    ]
+                  },
+                  "lastAppliedRevision": "main@sha1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "lastAttemptedRevision": "main@sha1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "observedGeneration": 1
+                }
+              },
+              {
+                "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+                "kind": "Kustomization",
+                "metadata": {
+                  "generation": 1,
+                  "labels": {
+                    "kustomize.toolkit.fluxcd.io/name": "cluster-apps",
+                    "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+                  },
+                  "name": "app-owner",
+                  "namespace": "flux-system",
+                  "uid": "uid-ks-app-owner"
+                },
+                "spec": {
+                  "path": "./kubernetes/apps/demo/app",
+                  "sourceRef": {
+                    "kind": "GitRepository",
+                    "name": "home-kubernetes",
+                    "namespace": "flux-system"
+                  },
+                  "suspend": false
+                },
+                "status": {
+                  "conditions": [
+                    {
+                      "observedGeneration": 1,
+                      "status": "True",
+                      "type": "Ready"
+                    }
+                  ],
+                  "inventory": {
+                    "entries": [
+                      {
+                        "id": "apps_demo_helm.toolkit.fluxcd.io_HelmRelease"
+                      }
+                    ]
+                  },
+                  "lastAppliedRevision": "main@sha1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "lastAttemptedRevision": "main@sha1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "observedGeneration": 1
+                }
+              },
+              {
+                "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+                "kind": "Kustomization",
+                "metadata": {
+                  "generation": 1,
+                  "labels": {
+                    "kustomize.toolkit.fluxcd.io/name": "cluster-apps",
+                    "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+                  },
+                  "name": "other-owner",
+                  "namespace": "flux-system",
+                  "uid": "uid-ks-other-owner"
+                },
+                "spec": {
+                  "path": "./kubernetes/apps/demo/application",
+                  "sourceRef": {
+                    "kind": "GitRepository",
+                    "name": "home-kubernetes",
+                    "namespace": "flux-system"
+                  },
+                  "suspend": false
+                },
+                "status": {
+                  "conditions": [
+                    {
+                      "observedGeneration": 1,
+                      "status": "True",
+                      "type": "Ready"
+                    }
+                  ],
+                  "inventory": {
+                    "entries": []
+                  },
+                  "lastAppliedRevision": "main@sha1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "lastAttemptedRevision": "main@sha1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "observedGeneration": 1
+                }
+              },
+              {
+                "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+                "kind": "Kustomization",
+                "metadata": {
+                  "generation": 1,
+                  "labels": {
+                    "kustomize.toolkit.fluxcd.io/name": "cluster-apps",
+                    "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+                  },
+                  "name": "new-owner",
+                  "namespace": "flux-system",
+                  "uid": "uid-ks-new-owner"
+                },
+                "spec": {
+                  "path": "./kubernetes/apps/demo/newapp",
+                  "sourceRef": {
+                    "kind": "GitRepository",
+                    "name": "home-kubernetes",
+                    "namespace": "flux-system"
+                  },
+                  "suspend": false
+                },
+                "status": {
+                  "conditions": [
+                    {
+                      "observedGeneration": 1,
+                      "status": "True",
+                      "type": "Ready"
+                    }
+                  ],
+                  "inventory": {
+                    "entries": []
+                  },
+                  "lastAppliedRevision": "main@sha1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "lastAttemptedRevision": "main@sha1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "observedGeneration": 1
+                }
+              }
+            ],
+            "kind": "List"
+          },
+          "ocirepositories": {
+            "apiVersion": "v1",
+            "items": [],
+            "kind": "List"
+          }
+        },
+        "before": {
+          "gitrepositories": {
+            "apiVersion": "v1",
+            "items": [
+              {
+                "apiVersion": "source.toolkit.fluxcd.io/v1",
+                "kind": "GitRepository",
+                "metadata": {
+                  "generation": 1,
+                  "name": "home-kubernetes",
+                  "namespace": "flux-system",
+                  "uid": "uid-git-home-kubernetes"
+                },
+                "spec": {
+                  "suspend": false,
+                  "url": "https://example.invalid/repo"
+                },
+                "status": {
+                  "conditions": [
+                    {
+                      "observedGeneration": 1,
+                      "status": "True",
+                      "type": "Ready"
+                    }
+                  ]
+                }
+              }
+            ],
+            "kind": "List"
+          },
+          "helmcharts": {
+            "apiVersion": "v1",
+            "items": [],
+            "kind": "List"
+          },
+          "helmreleases": {
+            "apiVersion": "v1",
+            "items": [
+              {
+                "apiVersion": "helm.toolkit.fluxcd.io/v2",
+                "kind": "HelmRelease",
+                "metadata": {
+                  "generation": 1,
+                  "labels": {
+                    "kustomize.toolkit.fluxcd.io/name": "app-owner",
+                    "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+                  },
+                  "name": "demo",
+                  "namespace": "apps",
+                  "uid": "uid-hr-demo"
+                },
+                "spec": {
+                  "suspend": true
+                },
+                "status": {
+                  "conditions": [
+                    {
+                      "observedGeneration": 1,
+                      "status": "True",
+                      "type": "Ready"
+                    }
+                  ],
+                  "lastAttemptedGeneration": 1,
+                  "observedGeneration": 1
+                }
+              }
+            ],
+            "kind": "List"
+          },
+          "helmrepositories": {
+            "apiVersion": "v1",
+            "items": [],
+            "kind": "List"
+          },
+          "kustomizations": {
+            "apiVersion": "v1",
+            "items": [
+              {
+                "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+                "kind": "Kustomization",
+                "metadata": {
+                  "generation": 1,
+                  "labels": {
+                    "kustomize.toolkit.fluxcd.io/name": "cluster",
+                    "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+                  },
+                  "name": "cluster",
+                  "namespace": "flux-system",
+                  "uid": "uid-ks-cluster"
+                },
+                "spec": {
+                  "path": "./kubernetes/flux",
+                  "sourceRef": {
+                    "kind": "GitRepository",
+                    "name": "home-kubernetes",
+                    "namespace": "flux-system"
+                  },
+                  "suspend": false
+                },
+                "status": {
+                  "conditions": [
+                    {
+                      "observedGeneration": 1,
+                      "status": "True",
+                      "type": "Ready"
+                    }
+                  ],
+                  "inventory": {
+                    "entries": [
+                      {
+                        "id": "flux-system_cluster_kustomize.toolkit.fluxcd.io_Kustomization"
+                      },
+                      {
+                        "id": "flux-system_cluster-apps_kustomize.toolkit.fluxcd.io_Kustomization"
+                      }
+                    ]
+                  },
+                  "lastAppliedRevision": "main@sha1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "lastAttemptedRevision": "main@sha1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "observedGeneration": 1
+                }
+              },
+              {
+                "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+                "kind": "Kustomization",
+                "metadata": {
+                  "generation": 1,
+                  "labels": {
+                    "kustomize.toolkit.fluxcd.io/name": "cluster",
+                    "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+                  },
+                  "name": "cluster-apps",
+                  "namespace": "flux-system",
+                  "uid": "uid-ks-cluster-apps"
+                },
+                "spec": {
+                  "path": "./kubernetes/apps",
+                  "sourceRef": {
+                    "kind": "GitRepository",
+                    "name": "home-kubernetes",
+                    "namespace": "flux-system"
+                  },
+                  "suspend": false
+                },
+                "status": {
+                  "conditions": [
+                    {
+                      "observedGeneration": 1,
+                      "status": "True",
+                      "type": "Ready"
+                    }
+                  ],
+                  "inventory": {
+                    "entries": [
+                      {
+                        "id": "flux-system_app-owner_kustomize.toolkit.fluxcd.io_Kustomization"
+                      },
+                      {
+                        "id": "flux-system_other-owner_kustomize.toolkit.fluxcd.io_Kustomization"
+                      },
+                      {
+                        "id": "flux-system_new-owner_kustomize.toolkit.fluxcd.io_Kustomization"
+                      }
+                    ]
+                  },
+                  "lastAppliedRevision": "main@sha1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "lastAttemptedRevision": "main@sha1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "observedGeneration": 1
+                }
+              },
+              {
+                "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+                "kind": "Kustomization",
+                "metadata": {
+                  "generation": 1,
+                  "labels": {
+                    "kustomize.toolkit.fluxcd.io/name": "cluster-apps",
+                    "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+                  },
+                  "name": "app-owner",
+                  "namespace": "flux-system",
+                  "uid": "uid-ks-app-owner"
+                },
+                "spec": {
+                  "path": "./kubernetes/apps/demo/app",
+                  "sourceRef": {
+                    "kind": "GitRepository",
+                    "name": "home-kubernetes",
+                    "namespace": "flux-system"
+                  },
+                  "suspend": false
+                },
+                "status": {
+                  "conditions": [
+                    {
+                      "observedGeneration": 1,
+                      "status": "True",
+                      "type": "Ready"
+                    }
+                  ],
+                  "inventory": {
+                    "entries": [
+                      {
+                        "id": "apps_demo_helm.toolkit.fluxcd.io_HelmRelease"
+                      }
+                    ]
+                  },
+                  "lastAppliedRevision": "main@sha1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "lastAttemptedRevision": "main@sha1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "observedGeneration": 1
+                }
+              },
+              {
+                "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+                "kind": "Kustomization",
+                "metadata": {
+                  "generation": 1,
+                  "labels": {
+                    "kustomize.toolkit.fluxcd.io/name": "cluster-apps",
+                    "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+                  },
+                  "name": "other-owner",
+                  "namespace": "flux-system",
+                  "uid": "uid-ks-other-owner"
+                },
+                "spec": {
+                  "path": "./kubernetes/apps/demo/application",
+                  "sourceRef": {
+                    "kind": "GitRepository",
+                    "name": "home-kubernetes",
+                    "namespace": "flux-system"
+                  },
+                  "suspend": false
+                },
+                "status": {
+                  "conditions": [
+                    {
+                      "observedGeneration": 1,
+                      "status": "True",
+                      "type": "Ready"
+                    }
+                  ],
+                  "inventory": {
+                    "entries": []
+                  },
+                  "lastAppliedRevision": "main@sha1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "lastAttemptedRevision": "main@sha1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "observedGeneration": 1
+                }
+              },
+              {
+                "apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+                "kind": "Kustomization",
+                "metadata": {
+                  "generation": 1,
+                  "labels": {
+                    "kustomize.toolkit.fluxcd.io/name": "cluster-apps",
+                    "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+                  },
+                  "name": "new-owner",
+                  "namespace": "flux-system",
+                  "uid": "uid-ks-new-owner"
+                },
+                "spec": {
+                  "path": "./kubernetes/apps/demo/newapp",
+                  "sourceRef": {
+                    "kind": "GitRepository",
+                    "name": "home-kubernetes",
+                    "namespace": "flux-system"
+                  },
+                  "suspend": false
+                },
+                "status": {
+                  "conditions": [
+                    {
+                      "observedGeneration": 1,
+                      "status": "True",
+                      "type": "Ready"
+                    }
+                  ],
+                  "inventory": {
+                    "entries": []
+                  },
+                  "lastAppliedRevision": "main@sha1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "lastAttemptedRevision": "main@sha1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                  "observedGeneration": 1
+                }
+              }
+            ],
+            "kind": "List"
+          },
+          "ocirepositories": {
+            "apiVersion": "v1",
+            "items": [],
+            "kind": "List"
+          }
+        },
+        "main_after": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "main_before": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "superseded": false
+      }
+    }
+  ],
+  "target_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+}

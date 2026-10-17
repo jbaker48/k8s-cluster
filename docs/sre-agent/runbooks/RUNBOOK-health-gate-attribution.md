@@ -19,7 +19,9 @@ GitHub keeps at most one pending run for the health-gate-main concurrency group 
 
 ## Owner decision
 
-The current evidence shows 0 of 61 HelmReleases attestable. Until that changes, every merge ends inconclusive and emits HealthGateInconclusive; Robusta forwards that Event as a Slack page. The owner must accept that notification volume or decide a notification policy. This change does not alter the policy or Robusta configuration.
+The current evidence shows 0 of 61 HelmReleases attestable. An inconclusive result emits `HealthGateInconclusive` as a Normal Event by default. It becomes Warning when a scoped Kustomization or HelmRelease reports a current failure for the target revision, or when a referenced OCIRepository, HelmRepository, or generated HelmChart reports a unique current-generation failure. Robusta 0.35.0 ignores Normal Events for its Warning Event trigger, while the existing Robusta configuration and other paging routes remain unchanged.
+
+Residual risk: escalation evidence is gathered only on iterations that complete the existing before/after snapshot pair with authenticated `main` reads. If pre-render attestation is unavailable, the workflow continues its existing snapshot polling for notification evidence and preserves `render-cache-unavailable` in the final diagnostics. Previously confirmed Flux failure evidence remains unchanged. If producer failures persist and no failure evidence was confirmed earlier, the inconclusive result remains non-paging Normal; this follows the owner-accepted policy that inconclusive alone does not page.
 
 ## What can be attested
 

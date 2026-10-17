@@ -1,0 +1,39 @@
+{
+  "name": "notify-producer-failure-poll",
+  "poll_producer_failure": {
+    "source_fixture": "notify-ks-ready-false-target.json",
+    "health_proof_fixture": "status-not-list.json",
+    "cases": [
+      {
+        "name": "producer-failure-after-confirmed-flux-failure",
+        "main_responses": ["target", "target", "target"],
+        "producer_responses": ["proof", "proof", "error"],
+        "classifier_responses": ["pass"],
+        "clock_responses": ["100", "100", "130", "160"],
+        "cluster_reads": 18,
+        "main_reads": 3,
+        "expected": {
+          "flux_unhealthy": true,
+          "flux_notification_evidence": "valid",
+          "flux_notification_scope": "apps:demo/app",
+          "event_type": "Warning"
+        }
+      },
+      {
+        "name": "producer-failure-without-prior-flux-evidence",
+        "main_responses": ["target"],
+        "producer_responses": ["error"],
+        "classifier_responses": [],
+        "clock_responses": ["100", "100", "160"],
+        "cluster_reads": 6,
+        "main_reads": 1,
+        "expected": {
+          "flux_unhealthy": false,
+          "flux_notification_evidence": "unavailable",
+          "flux_notification_scope": "unavailable",
+          "event_type": "Normal"
+        }
+      }
+    ]
+  }
+}

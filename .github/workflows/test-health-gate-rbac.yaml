@@ -71,3 +71,341 @@ jobs:
             echo "$OUTPUT"
             exit 1
           fi
+
+      - name: Checkout production health-gate source (main)
+        # v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: main
+          path: prod
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Install yq (pinned version, SHA256-verified)
+        run: |
+          set -euo pipefail
+          setup_failure() {
+            STATUS=$?
+            echo "PREMISE FAILURE (this is NOT a V-5 verdict)" >&2
+            echo "Pinned yq setup failed." >&2
+            {
+              echo "## PREMISE FAILURE (this is NOT a V-5 verdict)"
+              echo "Pinned yq setup failed with exit status ${STATUS}."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit "${STATUS}"
+          }
+          trap setup_failure ERR
+          YQ_VERSION="v4.54.1"
+          YQ_SHA256="8e34fc298390875de416e6a4afcb8cabeceb25d9aa8506c1a2f9353cf702ea5f"
+          YQ_DIR="${RUNNER_TEMP}/v5-bin"
+          YQ_BINARY="${YQ_DIR}/yq"
+          mkdir -p "${YQ_DIR}"
+          curl -fsSL -o "${YQ_BINARY}" \
+            "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64"
+          echo "${YQ_SHA256}  ${YQ_BINARY}" | sha256sum -c -
+          chmod 755 "${YQ_BINARY}"
+          echo "${YQ_DIR}" >> "$GITHUB_PATH"
+          "${YQ_BINARY}" --version
+          echo "PASS: installed SHA256-verified yq ${YQ_VERSION}."
+
+      - name: Write dead poll kubeconfig (runner-local only)
+        run: |
+          set -euo pipefail
+          setup_failure() {
+            STATUS=$?
+            echo "PREMISE FAILURE (this is NOT a V-5 verdict)" >&2
+            echo "Dead kubeconfig setup failed." >&2
+            {
+              echo "## PREMISE FAILURE (this is NOT a V-5 verdict)"
+              echo "Dead kubeconfig setup failed with exit status ${STATUS}."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit "${STATUS}"
+          }
+          trap setup_failure ERR
+          DEAD_KUBECONFIG="${RUNNER_TEMP}/v5-dead-kubeconfig.yaml"
+          cat > "${DEAD_KUBECONFIG}" <<'KUBECONFIG_EOF'
+          apiVersion: v1
+          clusters:
+            - cluster:
+                insecure-skip-tls-verify: true
+                server: https://127.0.0.1:1
+              name: dead
+          contexts:
+            - context:
+                cluster: dead
+                user: dummy
+              name: dead
+          current-context: dead
+          kind: Config
+          preferences: {}
+          users:
+            - name: dummy
+              user:
+                token: dummy
+          KUBECONFIG_EOF
+          chmod 600 "${DEAD_KUBECONFIG}"
+          echo "PASS: wrote runner-local kubeconfig for 127.0.0.1:1."
+
+      - name: Extract production V-5 step bodies from main
+        run: |
+          set -euo pipefail
+          SOURCE="prod/.github/workflows/health-gate.yaml"
+
+          premise_failure() {
+            MESSAGE="$1"
+            echo "PREMISE FAILURE (this is NOT a V-5 verdict): ${MESSAGE}" >&2
+            {
+              echo "## PREMISE FAILURE (this is NOT a V-5 verdict)"
+              echo "${MESSAGE}"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          }
+
+          if [ ! -s "${SOURCE}" ]; then
+            premise_failure "could not read production source from main."
+          fi
+
+          extract_step_body() {
+            STEP_NAME="$1"
+            BODY_FILE="$2"
+            case "${STEP_NAME}" in
+              "Poll Flux conditions and classify")
+                if ! MATCH_COUNT="$(
+                  yq '[
+                    .jobs."health-gate".steps[]
+                    | select(.name == "Poll Flux conditions and classify")
+                  ] | length' "${SOURCE}"
+                )"; then
+                  premise_failure "could not parse step ${STEP_NAME}."
+                fi
+                ;;
+              "Emit inconclusive notification")
+                if ! MATCH_COUNT="$(
+                  yq '[
+                    .jobs."health-gate".steps[]
+                    | select(.name == "Emit inconclusive notification")
+                  ] | length' "${SOURCE}"
+                )"; then
+                  premise_failure "could not parse step ${STEP_NAME}."
+                fi
+                ;;
+              *)
+                premise_failure "no extraction expression for ${STEP_NAME}."
+                ;;
+            esac
+
+            if ! [[ "${MATCH_COUNT}" =~ ^[0-9]+$ ]] ||
+              [ "${MATCH_COUNT}" -ne 1 ]; then
+              premise_failure "expected exactly one matching step ${STEP_NAME}."
+            fi
+
+            case "${STEP_NAME}" in
+              "Poll Flux conditions and classify")
+                if ! yq -r '
+                    .jobs."health-gate".steps[]
+                    | select(.name == "Poll Flux conditions and classify")
+                    | .run
+                  ' "${SOURCE}" > "${BODY_FILE}"; then
+                  premise_failure "could not extract step ${STEP_NAME}."
+                fi
+                ;;
+              "Emit inconclusive notification")
+                if ! yq -r '
+                    .jobs."health-gate".steps[]
+                    | select(.name == "Emit inconclusive notification")
+                    | .run
+                  ' "${SOURCE}" > "${BODY_FILE}"; then
+                  premise_failure "could not extract step ${STEP_NAME}."
+                fi
+                ;;
+            esac
+
+            if [ ! -s "${BODY_FILE}" ] ||
+              [ "$(cat "${BODY_FILE}")" = "null" ] ||
+              ! grep -q '[^[:space:]]' "${BODY_FILE}"; then
+              premise_failure "production step ${STEP_NAME} has an empty body."
+            fi
+          }
+
+          extract_step_body \
+            "Poll Flux conditions and classify" \
+            "${RUNNER_TEMP}/v5-poll-body.sh"
+          extract_step_body \
+            "Emit inconclusive notification" \
+            "${RUNNER_TEMP}/v5-notification-body.sh"
+          echo "PASS: extracted one non-empty body for each named step."
+
+      - name: Run production poll against dead API
+        run: |
+          set -euo pipefail
+          POLL_BODY="${RUNNER_TEMP}/v5-poll-body.sh"
+          POLL_OUTPUT="${RUNNER_TEMP}/v5-poll-output.txt"
+          POLL_STDOUT="${RUNNER_TEMP}/v5-poll-stdout.txt"
+          POLL_STDERR="${RUNNER_TEMP}/v5-poll-stderr.txt"
+          NOT_READY_FILE="${RUNNER_TEMP}/v5-not-ready-items.json"
+          : > "${POLL_OUTPUT}"
+
+          if WINDOW_SECONDS=90 \
+            POLL_INTERVAL_SECONDS=30 \
+            KUBECONFIG="${RUNNER_TEMP}/v5-dead-kubeconfig.yaml" \
+            GITHUB_OUTPUT="${POLL_OUTPUT}" \
+            bash --noprofile --norc -eo pipefail "${POLL_BODY}" \
+            > "${POLL_STDOUT}" 2> "${POLL_STDERR}"; then
+            STATUS=0
+          else
+            STATUS=$?
+          fi
+
+          cat "${POLL_STDOUT}"
+          if [ -s "${POLL_STDERR}" ]; then
+            cat "${POLL_STDERR}" >&2
+          fi
+
+          regression_failure() {
+            MESSAGE="$1"
+            echo "REGRESSION FAILURE: G-05-2 fail-silent regressed." >&2
+            echo "${MESSAGE}" >&2
+            {
+              echo "## REGRESSION FAILURE: G-05-2 fail-silent regressed"
+              echo "${MESSAGE}"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          }
+
+          if [ "${STATUS}" -ne 0 ]; then
+            regression_failure \
+              "the production poll body exited ${STATUS} against the dead API."
+          fi
+          if [ ! -s "${POLL_STDOUT}" ]; then
+            regression_failure \
+              "production poll body emitted zero stdout against dead API."
+          fi
+
+          WARNING_COUNT="$(
+            grep -Fc 'WARNING: kubectl poll failed' "${POLL_STDOUT}" || true
+          )"
+          if [ "${WARNING_COUNT}" -lt 2 ]; then
+            regression_failure \
+              "expected two kubectl poll warnings; found ${WARNING_COUNT}."
+          fi
+          OUTCOME_COUNT="$(
+            grep -Fxc 'outcome=inconclusive' "${POLL_OUTPUT}" || true
+          )"
+          if [ "${OUTCOME_COUNT}" -ne 1 ]; then
+            regression_failure \
+              "scratch output must contain exactly one inconclusive outcome."
+          fi
+
+          if ! NOT_READY_ITEMS="$(awk '
+            $0 == "not_ready_items<<POLLEOF" {
+              if (found) {
+                duplicate = 1
+                next
+              }
+              found = 1
+              inside = 1
+              next
+            }
+            inside && $0 == "POLLEOF" {
+              closed = 1
+              inside = 0
+              next
+            }
+            inside {
+              value = value (length(value) ? ORS : "") $0
+            }
+            END {
+              if (found != 1 || !closed || inside || duplicate) {
+                exit 1
+              }
+              printf "%s", value
+            }
+          ' "${POLL_OUTPUT}")"; then
+            regression_failure \
+              "not_ready_items heredoc block is malformed."
+          fi
+          if [ "${NOT_READY_ITEMS}" != "[]" ]; then
+            regression_failure \
+              "expected not_ready_items to be [], found ${NOT_READY_ITEMS}."
+          fi
+
+          printf '%s' "${NOT_READY_ITEMS}" > "${NOT_READY_FILE}"
+          echo "PASS: poll survived ${WARNING_COUNT} dead-API failures."
+          echo "outcome=inconclusive and not_ready_items=[]."
+          {
+            echo "## PASS: V-5 poll survived kubectl failure"
+            echo "- Production poll exit status: 0"
+            echo "- Dead-API warning lines: ${WARNING_COUNT}"
+            echo "- Scratch output: outcome=inconclusive; not_ready_items=[]"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # V-5 test seams: the poll child above gets a runner-local dead
+      # KUBECONFIG; this notification child gets a synthetic GITHUB_SHA so
+      # its UNWATCHED Event is visibly a harness artifact.
+      - name: Run production notification with real kubeconfig
+        run: |
+          set -euo pipefail
+          NOTIFICATION_BODY="${RUNNER_TEMP}/v5-notification-body.sh"
+          NOT_READY_FILE="${RUNNER_TEMP}/v5-not-ready-items.json"
+          NOTIFY_STDOUT="${RUNNER_TEMP}/v5-notification-stdout.txt"
+          NOTIFY_STDERR="${RUNNER_TEMP}/v5-notification-stderr.txt"
+          NOT_READY_ITEMS="$(cat "${NOT_READY_FILE}")"
+          EXPECTED_EVENT="event/health-gate-inconclusive-${GITHUB_RUN_ID}"
+          EXPECTED_EVENT="${EXPECTED_EVENT} created"
+          REAL_KUBECONFIG="${KUBECONFIG:?KUBECONFIG missing}"
+          REAL_GITHUB_SHA="${GITHUB_SHA:?GITHUB_SHA missing}"
+          HARNESS_GITHUB_SHA="HARNESS-TEST-not-a-merge-${REAL_GITHUB_SHA:0:7}"
+
+          if NOT_READY_ITEMS="${NOT_READY_ITEMS}" \
+            WINDOW_SECONDS=90 \
+            KUBECONFIG="${REAL_KUBECONFIG}" \
+            GITHUB_OUTPUT="${RUNNER_TEMP}/v5-notification-output.txt" \
+            GITHUB_SHA="${HARNESS_GITHUB_SHA}" \
+            bash --noprofile --norc -eo pipefail "${NOTIFICATION_BODY}" \
+            > "${NOTIFY_STDOUT}" 2> "${NOTIFY_STDERR}"; then
+            STATUS=0
+          else
+            STATUS=$?
+          fi
+
+          cat "${NOTIFY_STDOUT}"
+          if [ -s "${NOTIFY_STDERR}" ]; then
+            cat "${NOTIFY_STDERR}" >&2
+          fi
+
+          if [ "${STATUS}" -ne 0 ]; then
+            echo "REGRESSION FAILURE: empty-list notification regressed." >&2
+            {
+              echo "## REGRESSION FAILURE: empty-list notification"
+              echo "Production notification body exited ${STATUS}."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          if ! grep -Fqx \
+            "${EXPECTED_EVENT}" \
+            "${NOTIFY_STDOUT}"; then
+            echo "REGRESSION FAILURE: empty-list notification regressed." >&2
+            {
+              echo "## REGRESSION FAILURE: empty-list notification"
+              echo "Expected stdout: ${EXPECTED_EVENT}"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+          echo "PASS: production notification created the UNWATCHED Event."
+          {
+            echo "## PASS: V-5 empty-list inconclusive notification fired"
+            echo "- Production notification exit status: 0"
+            echo "- Event creation output: ${EXPECTED_EVENT}"
+            echo "- Input not_ready_items: []"
+            echo "- Synthetic merge marker: ${HARNESS_GITHUB_SHA}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Summarize V-5 harness result
+        if: always()
+        run: |
+          if [ "${{ job.status }}" = "success" ]; then
+            echo "## PASS: V-5 harness completed." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "## FAIL: V-5 harness failed." >> "$GITHUB_STEP_SUMMARY"
+          fi

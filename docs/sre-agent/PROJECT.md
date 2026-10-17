@@ -2,7 +2,7 @@
 
 ## What This Is
 
-An AI-assisted auto-merge pipeline for this cluster's GitOps repo. Every open PR (Renovate dependency bumps plus human-authored PRs) is reviewed by an AI risk-triage step modeled directly on `bjw-s-labs/home-ops`'s production `.forgejo/workflows/pr-reviewer.yaml` pattern: `misospace/pr-reviewer-action` calling the existing in-cluster `litellm` proxy, with `home-operations/konflate` wired in as an MCP tool server for rendered-diff/blast-radius evidence. An "approve" verdict triggers a real auto-merge — not just an advisory comment. A deterministic post-merge health-gate watches cluster health after merge and auto-reverts if something breaks. Cluster-critical infra (Talos, Kubernetes, Cilium) is always excluded from AI-driven auto-merge via deterministic path-glob matching (not agent judgment), regardless of verdict.
+An AI-assisted auto-merge pipeline for this cluster's GitOps repo. Every open PR (Renovate dependency bumps plus human-authored PRs) is reviewed by an AI risk-triage step modeled directly on `bjw-s-labs/home-ops`'s production `.forgejo/workflows/pr-reviewer.yaml` pattern: `misospace/pr-reviewer-action` calling the existing in-cluster `litellm` proxy, with `home-operations/konflate` wired in as an MCP tool server for rendered-diff/blast-radius evidence. An "approve" verdict triggers a real auto-merge — not just an advisory comment. A deterministic post-merge health-gate watches cluster health after merge and auto-reverts if something breaks. Cluster-critical infra (Talos, Kubernetes, Cilium, and Rook-Ceph) is always excluded from AI-driven auto-merge via deterministic path-glob matching (not agent judgment), regardless of verdict.
 
 ## Core Value
 
@@ -35,7 +35,7 @@ Low-risk PRs (the overwhelming majority of Renovate noise) merge themselves safe
 
 ### Validated
 
-- [x] Deterministic hard-exclusion rule: PRs touching Talos, Kubernetes core, or Cilium paths are never AI-auto-merged, implemented via path-glob matching (modeled on home-ops's `labeler.yaml`), independent of AI verdict — Validated in Phase 1: Hard-Exclusion Path-Gate. Empirically proven end-to-end against two real PRs (non-critical unflagged, critical dual-category flagged with combined sticky comment); code review also caught and fixed a config-fetch trust-boundary gap (CR-01) and a hardcoded-category drift risk (CR-02) before this was considered done.
+- [x] Deterministic hard-exclusion rule: PRs touching Talos, Kubernetes core, Cilium, or Rook-Ceph paths are never AI-auto-merged, implemented via path-glob matching (modeled on home-ops's `labeler.yaml`), independent of AI verdict — Validated in Phase 1: Hard-Exclusion Path-Gate. The historical two-PR proof covers the original categories only; Rook-Ceph-specific CI exclusion proof remains pending before go-live (k8s-a0h). Code review also caught and fixed a config-fetch trust-boundary gap (CR-01) and a hardcoded-category drift risk (CR-02) before this was considered done.
 - [x] AI review workflow runs against real PRs (Renovate and human-authored) on this repo via `workflow_dispatch`, using `pr-reviewer-action` + `litellm`, matching the bjw-s-labs/home-ops reference pattern — Validated in Phase 4: AI-Review Workflow (Advisory-Only). Empirically proven across a substantive chart-bump PR, a near-trivial digest-bump PR, a genuine fork-originated cross-repo PR, and a deliberately-broken-credential fail-closed test — comment-only, zero native reviews added, scoped litellm key confirmed via live spend-ledger inspection. **Caveat:** the originally-planned automatic `pull_request_target` trigger (opened/reopened/synchronize/ready_for_review) is NOT currently live — it was deliberately removed after a real live incident (the shared `github-actions[bot]` identity caused `ai-review.yaml`'s first automatic dispatch to silently overwrite an unrelated `flux-diff.yaml` comment on PR #1063, content unrecoverable). Restoring automatic triggering requires a dedicated bot identity (PAT or GitHub App) for `ai-review.yaml` — tracked as required follow-up work, not dropped.
 - [x] `konflate` wired into the review workflow as an MCP tool server for rendered-diff/blast-radius evidence — Validated in Phase 3 (deployment + standalone validation) and Phase 4 (review-workflow wiring: live runs show the model actually invoking `mcp__konflate__list_pull_requests`/`get_pr_summary` when it needs more than the injected diff summary).
 
@@ -49,7 +49,7 @@ Low-risk PRs (the overwhelming majority of Renovate noise) merge themselves safe
 
 - General-purpose "SRE agent" with broad kubectl/flux/git MCP access — explicitly rejected during questioning in favor of the narrower, validated home-ops pattern (CI job + scoped konflate MCP tool only)
 - toolhive as an MCP gateway — not needed once the narrower architecture was confirmed
-- Expanding the hard-exclusion list beyond Talos/Kubernetes/Cilium (e.g. storage/Rook Ceph, cert-manager, stateful apps) — deliberately left to AI judgment per the original seed design, not a hard rule
+- Expanding the hard-exclusion list beyond Talos/Kubernetes/Cilium/Rook-Ceph (e.g. cert-manager, stateful apps) — Rook-Ceph moved into the hard-exclusion list by owner decision 2026-10-11 (k8s-a0h); cert-manager and stateful apps remain left to AI judgment per the original seed design, not a hard rule
 
 ## Constraints
 

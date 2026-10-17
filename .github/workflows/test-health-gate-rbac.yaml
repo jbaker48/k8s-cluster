@@ -71,3 +71,276 @@ jobs:
             echo "$OUTPUT"
             exit 1
           fi
+
+      - name: Checkout main production health-gate source
+        # v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: main
+          path: prod
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Bootstrap yq (SHA256-verified, pinned release)
+        run: |
+          set -euo pipefail
+          YQ_VERSION="v4.54.1"
+          YQ_SHA256="8e34fc298390875de416e6a4afcb8cabeceb25d9aa8506c1a2f9353cf702ea5f"
+          curl -fsSL -o /tmp/yq \
+            "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64"
+          echo "${YQ_SHA256}  /tmp/yq" | sha256sum -c -
+          sudo install -m 755 /tmp/yq /usr/local/bin/yq
+          yq --version
+
+      - name: Extract production Flux classifier from main
+        run: |
+          set -euo pipefail
+          SOURCE="prod/.github/workflows/health-gate.yaml"
+          STEP_NAME="Poll Flux conditions and classify"
+          STEP_BODY="${RUNNER_TEMP}/cr01-production-poll-step.sh"
+          CLASSIFIER="${RUNNER_TEMP}/cr01-production-classifier.jq"
+          STEP_COUNT_QUERY='[.jobs."health-gate".steps[] |
+            select(.name == "Poll Flux conditions and classify")] | length'
+          RUN_QUERY='.jobs."health-gate".steps[] |
+            select(.name == "Poll Flux conditions and classify") | .run'
+
+          summary() {
+            printf "%s\n\n%s\n" "$1" "$2" \
+              >> "${GITHUB_STEP_SUMMARY}"
+          }
+
+          if ! STEP_COUNT=$(yq -r "${STEP_COUNT_QUERY}" "${SOURCE}"); then
+            echo "PREMISE FAILURE (this is NOT a CR-01 verdict):" \
+              "could not inspect production step '${STEP_NAME}'."
+            summary "### PREMISE FAILURE" \
+              "Could not inspect production step ${STEP_NAME}."
+            exit 1
+          fi
+          if [ "${STEP_COUNT}" != "1" ]; then
+            echo "PREMISE FAILURE (this is NOT a CR-01 verdict):" \
+              "expected one '${STEP_NAME}' step, found ${STEP_COUNT}."
+            summary "### PREMISE FAILURE" \
+              "Expected one ${STEP_NAME} step, found ${STEP_COUNT}."
+            exit 1
+          fi
+
+          if ! yq -r "${RUN_QUERY}" "${SOURCE}" > "${STEP_BODY}"; then
+            echo "PREMISE FAILURE (this is NOT a CR-01 verdict):" \
+              "could not extract the run body for '${STEP_NAME}'."
+            summary "### PREMISE FAILURE" \
+              "Could not extract the run body for ${STEP_NAME}."
+            exit 1
+          fi
+          BODY_WHITESPACE=$(tr -d '[:space:]' < "${STEP_BODY}")
+          BODY_VALUE=$(cat "${STEP_BODY}")
+          if [ ! -s "${STEP_BODY}" ] || [ -z "${BODY_WHITESPACE}" ] \
+            || [ "${BODY_VALUE}" = "null" ]; then
+            echo "PREMISE FAILURE (this is NOT a CR-01 verdict):" \
+              "production step '${STEP_NAME}' has an empty run body."
+            summary "### PREMISE FAILURE" \
+              "Production step ${STEP_NAME} has an empty run body."
+            exit 1
+          fi
+
+          if ! awk -f - "${STEP_BODY}" > "${CLASSIFIER}" <<'AWK'
+            /JQ_CLASSIFY='[[:space:]]*$/ {
+              if (found || closed) {
+                invalid = 1
+              } else {
+                found = 1
+                in_classifier = 1
+              }
+              next
+            }
+            in_classifier && /^[[:space:]]*'[[:space:]]*$/ {
+              closed = 1
+              in_classifier = 0
+              next
+            }
+            in_classifier { print }
+            END {
+              if (!found || !closed || invalid) {
+                exit 1
+              }
+            }
+          AWK
+          then
+            echo "PREMISE FAILURE (this is NOT a CR-01 verdict):" \
+              "could not extract JQ_CLASSIFY from '${STEP_NAME}'."
+            summary "### PREMISE FAILURE" \
+              "Could not extract JQ_CLASSIFY from ${STEP_NAME}."
+            exit 1
+          fi
+          if [ ! -s "${CLASSIFIER}" ] \
+            || ! grep -q 'all_ready' "${CLASSIFIER}" \
+            || ! grep -q 'stalled_or_failed' "${CLASSIFIER}"; then
+            echo "PREMISE FAILURE (this is NOT a CR-01 verdict):" \
+              "extracted JQ_CLASSIFY must mention both required fields."
+            summary "### PREMISE FAILURE" \
+              "Extracted JQ_CLASSIFY lacks all_ready or stalled_or_failed."
+            exit 1
+          fi
+
+          printf 'CR01_CLASSIFIER_FILE=%s\n' "${CLASSIFIER}" >> "${GITHUB_ENV}"
+
+      # Live regression harness for 05-REVIEW.md CR-01 (fixed in 2477e4b5): the
+      # health-gate classifier must never report all_ready=true for a genuinely
+      # empty Flux resource list. Before 2477e4b5 it did, so a cluster the gate
+      # could see nothing at all in was declared healthy on zero evidence.
+      #
+      # Why this is a VALID live proof of CR-01, and exactly what differs from
+      # production: this step makes a real Kubernetes API call through the real
+      # health-gate ServiceAccount RBAC, receives a real HTTP 200 response whose
+      # .items array is genuinely empty, and feeds it through the production
+      # classifier. The only delta from health-gate.yaml's production poll is
+      # the query scope: `-n kube-public` here versus `-A` there.
+      # Production's cluster-wide `-A` query cannot be forced to return an empty
+      # list without breaking the cluster, which is precisely why CR-01 survived
+      # review-by-inspection and needed this seam instead.
+      #
+      # Zero production impact: read-only verbs only, against a namespace that
+      # holds no Flux resources.
+      - name: >-
+          CR-01 regression assertion - genuinely empty Flux list must never
+          classify as healthy
+        run: |
+          # Deliberately `set -uo pipefail` and NOT -e: this step must reach its
+          # own explicit exit-code checks below. GitHub Actions already invokes
+          # the step shell as `bash --noprofile --norc -eo pipefail {0}`, so -e
+          # is inherited here regardless of what this line says - the same
+          # -e-inheritance trap documented in health-gate.yaml, lines 325-335
+          # (run 31170751825). Every command whose exit code is inspected
+          # therefore uses the `if CMD; then ...; else STATUS=$?; fi` form.
+          # is exempt from -e's early-exit behaviour.
+          set -uo pipefail
+
+          summary() {
+            printf "%s\n\n%s\n" "$1" "$2" \
+              >> "${GITHUB_STEP_SUMMARY}"
+          }
+
+          # kube-public is the empty seam: verified live 2026-08-12 to return
+          # exit 0 with `items: []` - a genuine empty success response, not an
+          # error response that merely looks empty.
+          FLUX_RESOURCES="kustomizations.kustomize.toolkit.fluxcd.io"
+          FLUX_RESOURCES+=",helmreleases.helm.toolkit.fluxcd.io"
+          KCTL_STATUS=0
+          if RAW_OUTPUT=$(kubectl get "${FLUX_RESOURCES}" \
+            -n kube-public -o json 2>/tmp/cr01-err.log); then
+            KCTL_STATUS=0
+          else
+            KCTL_STATUS=$?
+          fi
+
+          # PREMISE CHECKS. The CR-01 assertion is only meaningful if the
+          # response really is a successful, well-formed, empty list. Each
+          # failure below is deliberately worded as a PREMISE failure, distinct
+          # from the CR-01 failure banner, so a broken harness is never
+          # misreported as a broken health-gate (or vice versa).
+          if [ "${KCTL_STATUS}" -ne 0 ]; then
+            echo "PREMISE FAILURE (this is NOT a CR-01 verdict):" \
+              "kubectl query exited ${KCTL_STATUS}."
+            echo "No response was obtained to classify; CR-01 is untested."
+            cat /tmp/cr01-err.log 2>/dev/null || true
+            summary "### PREMISE FAILURE" \
+              "The kube-public query failed; CR-01 remains untested."
+            exit 1
+          fi
+
+          if ! echo "${RAW_OUTPUT}" | jq -e . >/dev/null 2>&1; then
+            echo "PREMISE FAILURE (this is NOT a CR-01 verdict):" \
+              "kubectl returned output that is not valid JSON."
+            cat /tmp/cr01-err.log 2>/dev/null || true
+            summary "### PREMISE FAILURE" \
+              "The kube-public query did not return valid JSON."
+            exit 1
+          fi
+
+          ITEM_COUNT=$(echo "${RAW_OUTPUT}" | jq '.items | length')
+          if [ "${ITEM_COUNT}" -ne 0 ]; then
+            echo "PREMISE FAILURE (this is NOT a CR-01 verdict):" \
+              "kube-public holds ${ITEM_COUNT} Flux resource(s)."
+            echo "This harness requires an empty HTTP 200 items: [] response."
+            echo "Use an empty namespace; do not pass non-empty data."
+            summary "### PREMISE FAILURE" \
+              "kube-public held ${ITEM_COUNT} Flux resource(s)."
+            exit 1
+          fi
+
+          # This is the production classifier extracted from main by the
+          # preceding step. A jq error here means the harness could not run the
+          # extracted production expression, so it is a premise failure rather
+          # than a CR-01 verdict.
+          JQ_CLASSIFY=$(cat "${CR01_CLASSIFIER_FILE}")
+          if RESULT=$(echo "${RAW_OUTPUT}" | jq -c "${JQ_CLASSIFY}" 2>&1); then
+            :
+          else
+            echo "PREMISE FAILURE (this is NOT a CR-01 verdict):" \
+              "jq could not run the extracted production classifier."
+            echo "${RESULT}"
+            summary "### PREMISE FAILURE" \
+              "jq could not run the extracted production classifier."
+            exit 1
+          fi
+          if ALL_READY=$(echo "${RESULT}" | jq -r '.all_ready' 2>&1); then
+            :
+          else
+            echo "PREMISE FAILURE (this is NOT a CR-01 verdict):" \
+              "jq could not read all_ready from the classifier result."
+            echo "${ALL_READY}"
+            summary "### PREMISE FAILURE" \
+              "jq could not read all_ready from the classifier result."
+            exit 1
+          fi
+          if STALLED_COUNT=$(
+            echo "${RESULT}" | jq '.stalled_or_failed | length' 2>&1
+          ); then
+            :
+          else
+            echo "PREMISE FAILURE (this is NOT a CR-01 verdict):" \
+              "jq could not read stalled_or_failed from the result."
+            echo "${STALLED_COUNT}"
+            summary "### PREMISE FAILURE" \
+              "jq could not read stalled_or_failed from the result."
+            exit 1
+          fi
+
+          if [ "${ALL_READY}" = "true" ]; then
+            echo "========================================"
+            echo "REGRESSION FAILURE: CR-01 REGRESSION DETECTED"
+            echo "========================================"
+            echo "A successful empty Flux resource list (items: []) was"
+            echo "classified as all_ready=true. CR-01 reported this before"
+            echo "2477e4b5: the health-gate declared a cluster healthy after"
+            echo "seeing nothing, and auto-merge proceeded without evidence."
+            echo "Classifier result: ${RESULT}"
+            echo "========================================"
+            summary "### REGRESSION FAILURE" \
+              "Production classifier returned all_ready=true for an empty list."
+            exit 1
+          fi
+
+          if [ "${ALL_READY}" != "false" ]; then
+            echo "REGRESSION FAILURE: unexpected all_ready value" \
+              "'${ALL_READY}'; expected exactly false."
+            echo "Classifier result: ${RESULT}"
+            summary "### REGRESSION FAILURE" \
+              "Unexpected all_ready value: ${ALL_READY}."
+            exit 1
+          fi
+
+          if [ "${STALLED_COUNT}" -ne 0 ]; then
+            echo "REGRESSION FAILURE: production classifier reported" \
+              "${STALLED_COUNT} stalled/failed entries for an empty list."
+            echo "An empty list cannot produce stalled entries."
+            echo "Classifier result: ${RESULT}"
+            summary "### REGRESSION FAILURE" \
+              "Production classifier reported ${STALLED_COUNT} stalled items."
+            exit 1
+          fi
+
+          echo "PASS: CR-01 holds - empty Flux list returned all_ready=false" \
+            "with zero stalled/failed entries."
+          echo "Classifier result: ${RESULT}"
+          summary "### PASS" \
+            "CR-01 holds: empty list returned all_ready=false and stalled=0."

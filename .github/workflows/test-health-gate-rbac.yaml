@@ -14,7 +14,7 @@ jobs:
     name: Verify health-gate RBAC and network reachability
     environment: health-gate
     runs-on: k8s-cluster-ci
-    timeout-minutes: 5
+    timeout-minutes: 10
     permissions:
       contents: read
     steps:
@@ -71,3 +71,284 @@ jobs:
             echo "$OUTPUT"
             exit 1
           fi
+
+      - name: Checkout main production source
+        # v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: main
+          path: prod
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Bootstrap yq (SHA256-verified)
+        run: |
+          set -euo pipefail
+          YQ_VERSION="v4.52.5"
+          YQ_SHA256="75d893a0d5940d1019cb7cdc60001d9e876623852c31cfc6267047bc31149fa9"
+          curl -fsSL -o /tmp/yq \
+            "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64"
+          echo "${YQ_SHA256}  /tmp/yq" | sha256sum -c -
+          sudo install -m 755 /tmp/yq /usr/local/bin/yq
+          yq --version
+
+      - name: Extract production revert step body
+        run: |
+          set -euo pipefail
+          STEP_NAME='git revert, or abort and notify on conflict'
+          SOURCE='prod/.github/workflows/health-gate.yaml'
+          PREMISE_PREFIX='PREMISE FAILURE (this is NOT a revert-conflict'
+          PREMISE_PREFIX="${PREMISE_PREFIX} verdict):"
+          if ! MATCH_COUNT=$(yq -r \
+            '[.jobs."health-gate".steps[]
+              | select(.name == "git revert, or abort and notify on conflict")]
+              | length' "${SOURCE}"); then
+            echo "${PREMISE_PREFIX} could not inspect step '${STEP_NAME}'."
+            exit 1
+          fi
+          if [ "${MATCH_COUNT}" != "1" ]; then
+            echo "${PREMISE_PREFIX} step '${STEP_NAME}' count=${MATCH_COUNT}."
+            exit 1
+          fi
+
+          BODY_FILE="${RUNNER_TEMP}/health-gate-production-revert.sh"
+          if ! yq -r \
+            '.jobs."health-gate".steps[]
+              | select(.name == "git revert, or abort and notify on conflict")
+              | .run' "${SOURCE}" > "${BODY_FILE}"; then
+            echo "${PREMISE_PREFIX} could not extract step '${STEP_NAME}'."
+            exit 1
+          fi
+          if [ ! -s "${BODY_FILE}" ] || \
+            [ "$(cat "${BODY_FILE}")" = "null" ]; then
+            echo "${PREMISE_PREFIX} step '${STEP_NAME}' has an empty run body."
+            exit 1
+          fi
+
+          printf 'REVERT_BODY_FILE=%s\n' "${BODY_FILE}" >> "${GITHUB_ENV}"
+          echo "Extracted one non-empty run body from '${STEP_NAME}'."
+
+      - name: Verify merge-commit revert and conflict abort notification
+        env:
+          APP_SLUG: health-gate-harness
+          BUCKETS: '["unscoped"]'
+          STALLED_OR_FAILED: >-
+            [{"namespace":"flux-system","name":"cluster-apps",
+            "kind":"Kustomization",
+            "resource":"kustomizations.kustomize.toolkit.fluxcd.io",
+            "reason":"HarnessInjected"}]
+        run: |
+          set -Eeuo pipefail
+          PREMISE_PREFIX='PREMISE FAILURE (this is NOT a revert-conflict'
+          PREMISE_PREFIX="${PREMISE_PREFIX} verdict):"
+
+          premise_failure() {
+            local message="$1"
+            printf '=== %s %s ===\n' "${PREMISE_PREFIX}" "${message}"
+            printf -- '- **PREMISE FAILURE**: %s\n' \
+              "${message}" >> "${GITHUB_STEP_SUMMARY}"
+            exit 1
+          }
+
+          regression_failure() {
+            local message="$1"
+            printf '=== REGRESSION FAILURE: %s ===\n' "${message}"
+            printf -- '- **REGRESSION FAILURE**: %s\n' \
+              "${message}" >> "${GITHUB_STEP_SUMMARY}"
+            exit 1
+          }
+
+          on_unexpected_error() {
+            local status=$?
+            premise_failure \
+              "harness error at ${BASH_LINENO[0]} (exit ${status})"
+          }
+          trap on_unexpected_error ERR
+
+          if [ -z "${REVERT_BODY_FILE:-}" ]; then
+            premise_failure 'extracted production body path is missing'
+          fi
+          if [ -z "${GITHUB_STEP_SUMMARY:-}" ]; then
+            premise_failure 'runner summary path is missing'
+          fi
+          if [ -z "${KUBECONFIG:-}" ] || [ ! -r "${KUBECONFIG}" ]; then
+            premise_failure \
+              'runner KUBECONFIG from the authentication step is unavailable'
+          fi
+          SCRATCH_ROOT="$(mktemp -d "${RUNNER_TEMP}/health-gate-revert.XXXXXX")"
+          trap 'rm -rf "${SCRATCH_ROOT}"' EXIT
+
+          build_merge_repo() {
+            local repo="$1"
+            mkdir -p "${repo}"
+            git -C "${repo}" init -b main >/dev/null 2>&1
+            git -C "${repo}" config user.name 'Health Gate Harness'
+            git -C "${repo}" config user.email 'hg-harness@example.invalid'
+            printf 'a\n' > "${repo}/f.txt"
+            git -C "${repo}" add f.txt
+            git -C "${repo}" commit -m 'base a' >/dev/null
+            git -C "${repo}" switch -c feature >/dev/null 2>&1
+            printf 'b\n' > "${repo}/f.txt"
+            git -C "${repo}" commit -am 'feature changes f to b' >/dev/null
+            git -C "${repo}" switch main >/dev/null 2>&1
+            git -C "${repo}" merge --no-ff feature >/dev/null
+
+            MERGE_SHA="$(git -C "${repo}" rev-parse HEAD)"
+            P1="$(git -C "${repo}" rev-parse "${MERGE_SHA}^1")"
+            PARENT_COUNT="$(
+              git -C "${repo}" cat-file -p "${MERGE_SHA}" \
+                | grep -c '^parent ' || true
+            )"
+            if [ "${PARENT_COUNT}" != "2" ]; then
+              premise_failure \
+                "merge ${MERGE_SHA} has ${PARENT_COUNT} parents; expected 2"
+            fi
+          }
+
+          run_production_body() {
+            local repo="$1"
+            local merge_sha="$2"
+            local output_file="$3"
+            local stdout_file="$4"
+            local stderr_file="$5"
+            local -a runner_github_env=()
+            local env_name env_value
+            while IFS='=' read -r env_name env_value; do
+              if [[ "${env_name}" == GITHUB_* && \
+                "${env_name}" != GITHUB_OUTPUT ]]; then
+                runner_github_env+=("${env_name}=${env_value}")
+              fi
+            done < <(env)
+            : > "${output_file}"
+            if (
+              cd "${repo}"
+              env -i \
+                PATH="${PATH}" \
+                HOME="${HOME}" \
+                PWD="${repo}" \
+                KUBECONFIG="${KUBECONFIG}" \
+                "${runner_github_env[@]}" \
+                APP_SLUG="${APP_SLUG}" \
+                MERGE_SHA="${merge_sha}" \
+                BUCKETS="${BUCKETS}" \
+                STALLED_OR_FAILED="${STALLED_OR_FAILED}" \
+                GITHUB_OUTPUT="${output_file}" \
+                bash --noprofile --norc -eo pipefail "${REVERT_BODY_FILE}"
+            ) > "${stdout_file}" 2> "${stderr_file}"; then
+              BODY_STATUS=0
+            else
+              BODY_STATUS=$?
+            fi
+          }
+
+          print_body_logs() {
+            local stdout_file="$1"
+            local stderr_file="$2"
+            cat "${stdout_file}"
+            if [ -s "${stderr_file}" ]; then
+              cat "${stderr_file}" >&2
+            fi
+          }
+
+          S0_SOURCE="${SCRATCH_ROOT}/s0/source"
+          S0_CLONE="${SCRATCH_ROOT}/s0/throwaway-clone"
+          build_merge_repo "${S0_SOURCE}"
+          S0_MERGE_SHA="${MERGE_SHA}"
+          git clone -q "${S0_SOURCE}" "${S0_CLONE}"
+          if S0_OUTPUT="$(
+            git -C "${S0_CLONE}" revert --no-edit "${S0_MERGE_SHA}" 2>&1
+          )"; then
+            premise_failure 'S0 plain revert accepted a merge without -m'
+          fi
+          if ! grep -Fq 'is a merge but no -m option' <<< "${S0_OUTPUT}"; then
+            premise_failure \
+              "S0 error did not mention missing -m (output: ${S0_OUTPUT})"
+          fi
+          echo '=== S0 PASS: merge commit rejects plain revert without -m ==='
+          printf -- '%s\n' \
+            '- **S0 PASS**: merge commit rejected plain revert without -m.' \
+            >> "${GITHUB_STEP_SUMMARY}"
+
+          S1_REPO="${SCRATCH_ROOT}/s1/repo"
+          build_merge_repo "${S1_REPO}"
+          S1_MERGE_SHA="${MERGE_SHA}"
+          S1_P1="${P1}"
+          S1_OUTPUT="${SCRATCH_ROOT}/s1-output"
+          S1_STDOUT="${SCRATCH_ROOT}/s1-stdout"
+          S1_STDERR="${SCRATCH_ROOT}/s1-stderr"
+          run_production_body "${S1_REPO}" "${S1_MERGE_SHA}" \
+            "${S1_OUTPUT}" "${S1_STDOUT}" "${S1_STDERR}"
+          print_body_logs "${S1_STDOUT}" "${S1_STDERR}"
+          if [ "${BODY_STATUS}" -ne 0 ]; then
+            regression_failure \
+              "S1 production step exited ${BODY_STATUS} on the -m 1 path"
+          fi
+          EXPECTED_BRANCH="auto-revert/unscoped-${GITHUB_RUN_ID}"
+          if ! grep -Fxq "branch=${EXPECTED_BRANCH}" \
+            "${S1_OUTPUT}"; then
+            regression_failure "S1 output missing branch=${EXPECTED_BRANCH}"
+          fi
+          S1_MESSAGE="$(
+            git -C "${S1_REPO}" log -1 --format=%B | tr '\n' ' ' | tr -s ' '
+          )"
+          if ! grep -Fq "reversing changes made to ${S1_P1}" \
+            <<< "${S1_MESSAGE}"; then
+            regression_failure "S1 HEAD message missing first parent ${S1_P1}"
+          fi
+          if ! git -C "${S1_REPO}" diff --quiet HEAD "${S1_P1}"; then
+            regression_failure 'S1 reverted tree does not match first parent'
+          fi
+          if grep -Fq 'created' "${S1_STDOUT}"; then
+            regression_failure 'S1 stdout unexpectedly contains created'
+          fi
+          echo "=== S1 PASS: -m 1 reverted to ${S1_P1}; no Event ==="
+          printf -- "- **S1 PASS**: revert to first parent %s; no Event.\n" \
+            "${S1_P1}" >> "${GITHUB_STEP_SUMMARY}"
+
+          S2_REPO="${SCRATCH_ROOT}/s2/repo"
+          build_merge_repo "${S2_REPO}"
+          S2_MERGE_SHA="${MERGE_SHA}"
+          printf 'c\n' > "${S2_REPO}/f.txt"
+          git -C "${S2_REPO}" commit -am \
+            'main changes f to c after merge' >/dev/null
+          S2_HEAD_BEFORE="$(git -C "${S2_REPO}" rev-parse HEAD)"
+          S2_OUTPUT="${SCRATCH_ROOT}/s2-output"
+          S2_STDOUT="${SCRATCH_ROOT}/s2-stdout"
+          S2_STDERR="${SCRATCH_ROOT}/s2-stderr"
+
+          # S2 creates a real HealthGateRevertFailed Event. Its message names
+          # the scratch merge SHA, and the forwarded Slack alert is expected;
+          # the operator must recognize it as a test alert.
+          run_production_body "${S2_REPO}" "${S2_MERGE_SHA}" \
+            "${S2_OUTPUT}" "${S2_STDOUT}" "${S2_STDERR}"
+          print_body_logs "${S2_STDOUT}" "${S2_STDERR}"
+          if [ "${BODY_STATUS}" -ne 1 ]; then
+            regression_failure \
+              "S2 conflict path exited ${BODY_STATUS}; expected 1"
+          fi
+          EVENT_NAME="health-gate-revert-failed-${GITHUB_RUN_ID}"
+          EXPECTED_EVENT="event/${EVENT_NAME} created"
+          if ! grep -Fq "${EXPECTED_EVENT}" "${S2_STDOUT}"; then
+            regression_failure 'S2 stdout missing expected Event output'
+          fi
+          if git -C "${S2_REPO}" rev-parse -q --verify \
+            REVERT_HEAD >/dev/null; then
+            regression_failure 'S2 left a revert in progress after the conflict'
+          fi
+          if [ -n "$(git -C "${S2_REPO}" status --porcelain)" ]; then
+            regression_failure 'S2 working tree remains dirty after abort'
+          fi
+          S2_HEAD_AFTER="$(git -C "${S2_REPO}" rev-parse HEAD)"
+          if [ "${S2_HEAD_AFTER}" != "${S2_HEAD_BEFORE}" ]; then
+            regression_failure 'S2 HEAD changed after conflict handling'
+          fi
+          if grep -q '^branch=' "${S2_OUTPUT}"; then
+            regression_failure 'S2 wrote a branch output despite the conflict'
+          fi
+          echo "=== S2 PASS: conflict aborted; event/${EVENT_NAME} ==="
+          printf -- '- **S2 PASS**: conflict aborted; Event %s created.\n' \
+            "${EVENT_NAME}" \
+            >> "${GITHUB_STEP_SUMMARY}"
+          printf -- '- Expected Slack alert names scratch merge SHA %s.\n' \
+            "${S2_MERGE_SHA}" \
+            >> "${GITHUB_STEP_SUMMARY}"

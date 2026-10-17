@@ -1,6 +1,6 @@
 ---
 name: pr-review
-description: Adversarially review a k8s-cluster PR, branch or diff and file confirmed high findings in Beads.
+description: Adversarially review a k8s-cluster PR, branch or diff, or sweep all open PRs into a tiered merge/hold/close report, and file confirmed high findings in Beads. Usage - /pr-review <PR | branch | --uncommitted | --all-open>.
 ---
 
 Read and follow `.agents/skills/pr-review/SKILL.md` and `docs/dynamic-workflow.md`.

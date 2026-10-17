@@ -48,6 +48,12 @@ spec:
     customPlaybooks:
       - triggers:
           - on_kubernetes_warning_event_create:
+              # Robusta default rate_limit 3600 keys on reason + involvedObject.
+              # It dropped 2/3 UAT HealthGateAutoRevert events in k8s-zdb.5.1.
+              # Each GitHub run has a unique event, so dedup is not wanted.
+              # Forwarder (kubewatch) restarts may re-send events younger than
+              # the 1h Event TTL.
+              rate_limit: 0
               include:
                 - "HealthGateAutoRevert"
                 - "HealthGateInconclusive"

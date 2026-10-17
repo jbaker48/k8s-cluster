@@ -54,3 +54,6 @@ wiki
 # Agent workflow output
 .lane-out/
 .autopilot-logs/
+
+# Local agent worktrees (Codex/Claude); never commit
+.codex/worktrees/

@@ -66,6 +66,8 @@ spec:
               readOnlyRootFilesystem: true
               capabilities: { drop: ["ALL"] }
         pod:
+          # app-template v5 defaults this to false; the operator needs its API token
+          automountServiceAccountToken: true
           securityContext:
             runAsUser: 65534
             runAsGroup: 65534

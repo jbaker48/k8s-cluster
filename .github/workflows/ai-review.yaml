@@ -104,7 +104,7 @@ jobs:
 
       - name: AI PR Review
         if: ${{ steps.pr.outputs.draft != 'true' }}
-        uses: misospace/pr-reviewer-action@6f4fb724b222f6d9a83096d6b41cd636ef3a044e # v2.1.10
+        uses: misospace/pr-reviewer-action@a962cdfc21c378a3b8cf2d8b194c787408e60e6b # v2.5.0
         with:
           github_token: ${{ github.token }}
           repo: ${{ inputs.repo || github.repository }}

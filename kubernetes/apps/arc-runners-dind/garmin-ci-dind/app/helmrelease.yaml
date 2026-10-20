@@ -138,7 +138,7 @@ spec:
           # .github/renovate.json5.
           - name: runner
             # Same image as garmin-ci, which honours CUSTOM_ACTIONS_RESULTS_URL for the cache server.
-            image: ghcr.io/falcondev-oss/actions-runner:2.336.0@sha256:b0cbd599b4124962a91930f85b0061adc5a5aaf874221d29741411fc661a259b
+            image: ghcr.io/falcondev-oss/actions-runner:2.338.0@sha256:3c4d939869cb1374cd61bfcb3abbe6c1444991f7b20c48cbb13708484ee0a8e1
             imagePullPolicy: IfNotPresent
             command: ["/home/runner/run.sh"]
             env:

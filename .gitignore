@@ -50,6 +50,10 @@ wiki
 .beads-credential-key
 .beads/proxieddb/
 *.gate.lock*
+# Beads is local-only in this public repo
+.beads/
+.agents/skills/beads/
+.cursor/rules/beads.mdc
 
 # Agent workflow output
 .lane-out/

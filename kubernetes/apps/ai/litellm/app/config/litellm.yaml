@@ -105,6 +105,46 @@ model_list:
         quality_tier: 3
         strengths: ["code_generation", "analytical_reasoning", "technical_design"]
 
+# -*= AI-review candidates (k8s-zdb.6.3 replay A/B) =*-
+# Cheap models with reasoning effort pinned per alias, because the AI-review
+# action (v2.5.0) cannot send reasoning_effort itself. Not in any router pool.
+
+  - model_name: review-gpt-6-luna-high
+    litellm_params:
+      model: openrouter/openai/gpt-6-luna
+      api_key: {{ .LITELLM_OPENROUTER_API_KEY }}
+      reasoning_effort: high
+
+  - model_name: review-gpt-6-luna-max
+    litellm_params:
+      model: openrouter/openai/gpt-6-luna
+      api_key: {{ .LITELLM_OPENROUTER_API_KEY }}
+      reasoning_effort: max
+
+  - model_name: review-gemini-3.8-flash-high
+    litellm_params:
+      model: openrouter/google/gemini-3.8-flash
+      api_key: {{ .LITELLM_OPENROUTER_API_KEY }}
+      reasoning_effort: high
+
+  - model_name: review-deepseek-v4.1-flash-high
+    litellm_params:
+      model: openrouter/deepseek/deepseek-v4.1-flash
+      api_key: {{ .LITELLM_OPENROUTER_API_KEY }}
+      reasoning_effort: high
+
+  - model_name: review-minimax-m3.1-flash-high
+    litellm_params:
+      model: openrouter/minimax/minimax-m3.1-flash
+      api_key: {{ .LITELLM_OPENROUTER_API_KEY }}
+      reasoning_effort: high
+
+  - model_name: review-glm-5.3-flash-high
+    litellm_params:
+      model: openrouter/z-ai/glm-5.3-flash
+      api_key: {{ .LITELLM_OPENROUTER_API_KEY }}
+      reasoning_effort: high
+
 # -*= Adaptive router aliases =*-
 # adaptive_router_config must be inside litellm_params (not auto_router_config — that's a file path)
 

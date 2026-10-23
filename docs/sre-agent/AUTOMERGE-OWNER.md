@@ -18,13 +18,10 @@ Renovate requires dependency dashboard approval before opening Talos,
 Kubernetes, Cilium, and Rook-Ceph update PRs.
 Dashboard approval only gates Renovate branch and PR creation; it does not
 check the approver's identity or block merging. Talos, Kubernetes-core paths,
-and Cilium are additionally blocked from auto-merge by
-`.github/exclusion-gate.yaml`.
-
-Rook-Ceph is not yet in `.github/exclusion-gate.yaml`; adding it is tracked in
-`k8s-a0h`, which is a hard prerequisite of auto-merge go-live
-(`k8s-zdb.6.1` depends on it). Auto-merge must not go live while Rook-Ceph PRs
-can reach it; until then every Rook-Ceph PR is merged by the owner manually.
+Cilium, and Rook-Ceph are additionally blocked from auto-merge by
+`.github/exclusion-gate.yaml` (Rook-Ceph added in #1144, `k8s-a0h`). The live
+proof that a Rook-Ceph PR is excluded is tracked in `k8s-u78`, a prerequisite of
+auto-merge go-live (`k8s-zdb.6.1`).
 
 ## ARC runner image tracking
 

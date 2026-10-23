@@ -19,7 +19,7 @@
 
 ### Exclusion Gate
 
-- [x] **GATE-01**: Deterministic path-glob hard-exclusion check runs on every PR, matching Talos, Kubernetes-core, and Cilium paths, independent of and unoverridable by the AI verdict
+- [x] **GATE-01**: Deterministic path-glob hard-exclusion check runs on every PR, matching Talos, Kubernetes-core, Cilium, and Rook-Ceph paths, independent of and unoverridable by the AI verdict; Rook-Ceph-specific CI proof remains pending under k8s-a0h
 - [x] **GATE-02**: A PR matching the hard-exclusion gate is visibly marked (comment and/or label) and always requires human merge, regardless of AI verdict
 
 ### Auto-Merge
@@ -60,7 +60,7 @@ Explicitly excluded. Documented to prevent scope creep.
 |---------|--------|
 | General-purpose kubectl/flux/git MCP access for the review agent | Rejected during questioning — home-ops's own production pattern proves a CI job + one scoped MCP tool is sufficient; broad live-cluster access is the largest blast-radius risk in the design |
 | toolhive as an MCP gateway | Unneeded once the narrower single-tool (konflate) architecture was confirmed |
-| Expanding the hard-exclusion list beyond Talos/Kubernetes-core/Cilium | Deliberately left to AI judgment per the original seed design; revisit only if track-record data shows systematic AI under-weighting for another category, the same way spike 001 proved the case for Cilium |
+| Expanding the hard-exclusion list beyond Talos/Kubernetes-core/Cilium/Rook-Ceph | Rook-Ceph moved into the hard-exclusion list by owner decision 2026-10-11 (k8s-a0h); cert-manager and stateful apps remain left to AI judgment per the original seed design; revisit only if track-record data shows systematic AI under-weighting for another category, the same way spike 001 proved the case for Cilium |
 | Adaptive/router model selection instead of a pinned model | Spike 001 used a pinned model for reproducible results; adaptive routing is a separate production cost-optimization concern, not part of this project |
 | Per-app/per-namespace configurable health-gate windows | The `db_or_migration_changes`/stateful-app risk category needs its own follow-up spike before a differentiated window design is worth building |
 

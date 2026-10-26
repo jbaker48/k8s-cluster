@@ -68,6 +68,6 @@ spec:
           # Tracked by the "ARC runner image" customManager in
           # .github/renovate.json5.
           - name: runner
-            image: ghcr.io/actions/actions-runner:2.336.0
+            image: ghcr.io/actions/actions-runner:2.338.2
             imagePullPolicy: IfNotPresent
             command: ["/home/runner/run.sh"]

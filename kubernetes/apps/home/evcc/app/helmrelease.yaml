@@ -29,7 +29,7 @@ spec:
           main:
             image:
               repository: evcc/evcc
-              tag: 0.306.2
+              tag: 0.318.1
             env:
               TZ: Australia/Sydney
             envFrom:

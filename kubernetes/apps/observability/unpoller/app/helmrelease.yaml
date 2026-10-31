@@ -27,7 +27,7 @@ spec:
           app:
             image:
               repository: ghcr.io/unpoller/unpoller
-              tag: v2.21.0@sha256:a08b532be181256318211b6170691e316d29ac04575bc54d59620189953f03aa
+              tag: v5.9.0@sha256:7dee16ed0a2191e1bf32e59b1cebe1cc30ae9394d63657b2ae2d3029bc41ca64
             env:
               TZ: Australia/Sydney
               UP_UNIFI_DEFAULT_ROLE: unifi-poller

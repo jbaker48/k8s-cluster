@@ -108,7 +108,7 @@ spec:
           # already documents once. Digest re-verified live immediately before
           # this edit landed (see 39-06-SUMMARY.md).
           - name: runner
-            image: ghcr.io/falcondev-oss/actions-runner:2.336.0@sha256:b0cbd599b4124962a91930f85b0061adc5a5aaf874221d29741411fc661a259b
+            image: ghcr.io/falcondev-oss/actions-runner:2.338.2@sha256:462ebdbc95fabf0bdf264ffe02ff5182665c6d99ac0f870b67d7f649c1ef1746
             imagePullPolicy: IfNotPresent
             command: ["/home/runner/run.sh"]
             env:

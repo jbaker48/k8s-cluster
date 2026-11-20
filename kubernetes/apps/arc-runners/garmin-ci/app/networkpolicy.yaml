@@ -210,8 +210,12 @@ spec:
     # Chrome for Testing". Needed by every job that runs
     # `playwright install --with-deps chromium` (web-a11y and its two
     # authenticated/onboarding siblings).
+    # 2026-11-21: cdn.playwright.dev now answers 307 to storage.googleapis.com
+    # (chrome-for-testing-public/...), so the browser download needs that host too. Without it
+    # the IPv4 connect is dropped here and only the IPv6 ENETUNREACH surfaces in the job log.
     - toFQDNs:
         - matchName: "cdn.playwright.dev"
+        - matchName: "storage.googleapis.com"
       toPorts:
         - ports:
             - port: "443"
@@ -411,6 +415,15 @@ spec:
     # Hubble logged the exact hostname:443 egress DENIED and dropped TCP SYN.
     - toFQDNs:
         - matchName: "bedrock-runtime.us-west-2.amazonaws.com"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+
+    # 2026-11-21 (garmin-ai-coach #634 follow-up): web-deployed-reachability moved here from the
+    # workstation runner; its real browser loads the deployed dev web origin on Amplify Hosting.
+    - toFQDNs:
+        - matchPattern: "*.amplifyapp.com"
       toPorts:
         - ports:
             - port: "443"

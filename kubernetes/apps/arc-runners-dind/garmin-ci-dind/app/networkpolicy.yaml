@@ -196,6 +196,18 @@ spec:
             - port: "443"
               protocol: TCP
 
+    # 2026-11-21 (garmin-ai-coach #634 follow-up): the x86 deploy jobs and build-web moved here from
+    # the workstation runner. build-web drives Amplify and checks the deployed origin; CDK image
+    # bundling pulls ECR Public layers from the us-east-1 starport bucket.
+    - toFQDNs:
+        - matchName: "amplify.us-west-2.amazonaws.com"
+        - matchPattern: "*.amplifyapp.com"
+        - matchName: "prod-us-east-1-starport-layer-bucket.s3.us-east-1.amazonaws.com"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+
     - toEndpoints:
         - matchLabels:
             app.kubernetes.io/name: gha-cache-server

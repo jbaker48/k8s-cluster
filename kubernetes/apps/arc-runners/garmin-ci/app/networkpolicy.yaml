@@ -416,6 +416,15 @@ spec:
             - port: "443"
               protocol: TCP
 
+    # 2026-11-21 (garmin-ai-coach #634 follow-up): web-deployed-reachability moved here from the
+    # workstation runner; its real browser loads the deployed dev web origin on Amplify Hosting.
+    - toFQDNs:
+        - matchPattern: "*.amplifyapp.com"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+
     # Deliberately absent at this point: the rest of AWS (S3/ECR/Lambda in
     # us-west-2, Bedrock in us-east-1).
     # These are added as each is observed dropped via Hubble, per D-13's

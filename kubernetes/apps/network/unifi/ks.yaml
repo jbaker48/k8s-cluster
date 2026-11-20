@@ -30,3 +30,5 @@ spec:
       APP: *app
       VOLSYNC_CAPACITY: 5Gi
       VOLSYNC_SCHEDULE: "25 * * * *"
+      # Unifi Mongo files are root-owned 0600; the mover must run as root or the DB is not backed up.
+      VOLSYNC_MOVER_UID: "0"

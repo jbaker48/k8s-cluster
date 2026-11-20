@@ -30,3 +30,5 @@ spec:
       APP: *app
       VOLSYNC_CAPACITY: 100Gi
       VOLSYNC_SCHEDULE: "15 * * * *"
+      # Photoprism writes root-owned 0600 files; the mover must run as root to read them.
+      VOLSYNC_MOVER_UID: "0"

@@ -43,9 +43,9 @@ spec:
     storageClassName: "${VOLSYNC_STORAGECLASS:-ceph-block}"
     accessModes: ["${VOLSYNC_ACCESSMODES:-ReadWriteOnce}"]
     moverSecurityContext:
-      runAsUser: 568
-      runAsGroup: 568
-      fsGroup: 568
+      runAsUser: ${VOLSYNC_MOVER_UID:-568}
+      runAsGroup: ${VOLSYNC_MOVER_UID:-568}
+      fsGroup: ${VOLSYNC_MOVER_UID:-568}
       fsGroupChangePolicy: OnRootMismatch
     retain:
       hourly: 24
@@ -71,7 +71,7 @@ spec:
     accessModes: ["${VOLSYNC_ACCESSMODES:-ReadWriteOnce}"]
     capacity: "${VOLSYNC_CAPACITY}"
     moverSecurityContext:
-      runAsUser: 568
-      runAsGroup: 568
-      fsGroup: 568
+      runAsUser: ${VOLSYNC_MOVER_UID:-568}
+      runAsGroup: ${VOLSYNC_MOVER_UID:-568}
+      fsGroup: ${VOLSYNC_MOVER_UID:-568}
       fsGroupChangePolicy: OnRootMismatch

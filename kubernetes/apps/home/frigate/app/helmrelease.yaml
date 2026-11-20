@@ -85,6 +85,8 @@ spec:
     defaultPodOptions:
       nodeSelector:
         intel.feature.node.kubernetes.io/gpu: "true"
+        # talos01 is the high-spec node; keep Frigate there.
+        kubernetes.io/hostname: talos01
       # Mirrors Plex's rule. Plex's anti-affinity only stops Plex being placed
       # on Frigate's node -- it does not stop Frigate moving onto Plex's node,
       # so a Frigate reschedule could re-stack them and both would contend for

@@ -25,7 +25,10 @@ cniConfig:
 nodes:
   - hostname: "talos01"
     ipAddress: "10.20.0.14"
-    installDisk: "/dev/sda"
+    # System disk is the NVMe M.2 (Patriot P320). The SATA CT500MX500 (/dev/sda,
+    # ata3) holds the Ceph OSD and must never be selected as the install disk.
+    installDiskSelector:
+      busPath: /pci0000:00/0000:00:06.0/0000:01:00.0/*
     # talosImageURL: factory.talos.dev/installer/176603246fc5e700eec6b7044a57dd2bd0521b1d8da6e335c5c24bd66dafba4b
     controlPlane: true
     networkInterfaces:

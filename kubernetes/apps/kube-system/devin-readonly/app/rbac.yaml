@@ -1,0 +1,100 @@
+---
+# Read-only identity for Devin (via Local Hands on the owner's workstation).
+# Cluster changes go through this repo and Flux, never kubectl.
+# yamllint disable rule:line-length
+# yaml-language-server: $schema=https://kubernetes-schemas.pages.dev/core_v1_serviceaccount.json
+# yamllint enable rule:line-length
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: devin-readonly
+  namespace: kube-system
+---
+# Long-lived token; delete the Secret to rotate (Flux recreates it).
+apiVersion: v1
+kind: Secret
+metadata:
+  name: devin-readonly-token
+  namespace: kube-system
+  annotations:
+    kubernetes.io/service-account.name: devin-readonly
+type: kubernetes.io/service-account-token
+---
+# Built-in `view`: namespaced reads, including pod logs, excluding Secrets.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: devin-readonly-view
+subjects:
+  - kind: ServiceAccount
+    name: devin-readonly
+    namespace: kube-system
+roleRef:
+  kind: ClusterRole
+  name: view
+  apiGroup: rbac.authorization.k8s.io
+---
+# yamllint disable rule:line-length
+# yaml-language-server: $schema=https://kubernetes-schemas.pages.dev/rbac.authorization.k8s.io/clusterrole_v1.json
+# yamllint enable rule:line-length
+# Cluster-scoped objects and CRDs that `view` does not cover. No Secrets.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: devin-readonly
+rules:
+  - apiGroups: [""]
+    resources:
+      - nodes
+      - namespaces
+      - persistentvolumes
+      - componentstatuses
+    verbs: ["get", "list", "watch"]
+  - apiGroups:
+      - apiextensions.k8s.io
+      - apiregistration.k8s.io
+      - admissionregistration.k8s.io
+      - storage.k8s.io
+      - scheduling.k8s.io
+      - node.k8s.io
+      - networking.k8s.io
+      - rbac.authorization.k8s.io
+      - events.k8s.io
+      - metrics.k8s.io
+      - snapshot.storage.k8s.io
+      - kustomize.toolkit.fluxcd.io
+      - helm.toolkit.fluxcd.io
+      - source.toolkit.fluxcd.io
+      - notification.toolkit.fluxcd.io
+      - external-secrets.io
+      - generators.external-secrets.io
+      - gateway.networking.k8s.io
+      - gateway.envoyproxy.io
+      - cilium.io
+      - monitoring.coreos.com
+      - cert-manager.io
+      - acme.cert-manager.io
+      - ceph.rook.io
+      - objectbucket.io
+      - volsync.backube
+      - openebs.io
+      - postgresql.cnpg.io
+      - dragonflydb.io
+      - externaldns.k8s.io
+      - nfd.k8s-sigs.io
+      - actions.github.com
+    resources: ["*"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: devin-readonly
+subjects:
+  - kind: ServiceAccount
+    name: devin-readonly
+    namespace: kube-system
+roleRef:
+  kind: ClusterRole
+  name: devin-readonly
+  apiGroup: rbac.authorization.k8s.io

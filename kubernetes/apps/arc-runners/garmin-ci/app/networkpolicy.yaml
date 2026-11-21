@@ -60,6 +60,17 @@ spec:
             - port: "443"
               protocol: TCP
 
+    # Trivy vulnerability DB pull for garmin-ai-coach's release `trivy` job:
+    # ghcr.io serves the OCI manifest; pkg-containers.githubusercontent.com
+    # serves the blob redirect. Exact HTTPS hosts only.
+    - toFQDNs:
+        - matchName: "ghcr.io"
+        - matchName: "pkg-containers.githubusercontent.com"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+
     # 3. Toolchain and package registries (Risk 6, 39-CONTEXT.md): the ARC
     #    runner image has no preinstalled Node or Python and no hosted tool
     #    cache, so setup-node/setup-uv and npm/pip re-download on every job.

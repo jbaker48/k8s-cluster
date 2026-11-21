@@ -43,6 +43,16 @@ affinity:
         - matchExpressions:
             - key: node-role.kubernetes.io/control-plane
               operator: Exists
+topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: kubernetes.io/hostname
+    whenUnsatisfiable: DoNotSchedule
+    labelSelector:
+      matchLabels:
+        app.kubernetes.io/instance: coredns
+        k8s-app: kube-dns
+podDisruptionBudget:
+  maxUnavailable: 1
 tolerations:
   - key: CriticalAddonsOnly
     operator: Exists

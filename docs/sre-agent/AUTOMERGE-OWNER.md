@@ -5,8 +5,21 @@ References: `k8s-19y`, `k8s-2cc`
 
 The AI-review pipeline is the single owner of auto-merge: the deterministic
 exclusion gate, AI review, then health gate with auto-revert. Auto-merge go-live
-is tracked in #1201 (formerly Beads epic `k8s-zdb.6` and issue `k8s-zdb.6.1`). Until that ships, the
-owner merges PRs manually.
+is tracked in #1201 (formerly Beads epic `k8s-zdb.6` and issue `k8s-zdb.6.1`). `.github/workflows/ai-review.yaml` runs on every same-repo PR as the dedicated
+ai-review GitHub App. Its `auto-merge` job squash-merges a PR only when all of
+these hold:
+
+- the author is in `AUTOMERGE_AUTHORS` (currently only `renovate[bot]`);
+- the AI verdict is `approve`;
+- `Exclusion Check` succeeded, plus both Flux Diff checks when `kubernetes/**`
+  changed;
+- the PR has no `gate/human-required` label (hard exclusion or paused circuit
+  breaker);
+- the head commit is the one that was reviewed.
+
+The merge uses the App token, so the push to `main` triggers
+`health-gate.yaml`, which auto-reverts through the revert-bot App. Every other
+PR is still merged by the owner.
 
 Renovate only opens PRs. Its config explicitly disables auto-merge, limits open
 PRs to 10 concurrent and 2 per hour, keeps the weekend schedule, and waits three

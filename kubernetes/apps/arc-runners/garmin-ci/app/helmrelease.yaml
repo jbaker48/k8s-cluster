@@ -75,6 +75,15 @@ spec:
                     - key: kubernetes.io/hostname
                       operator: NotIn
                       values: ["talos02"]
+            # talos01 has 16 cores and the most memory (48 GB) while talos03
+            # (8 cores) was thermal throttling at 100°C under CI, so prefer talos01.
+            preferredDuringSchedulingIgnoredDuringExecution:
+              - weight: 100
+                preference:
+                  matchExpressions:
+                    - key: kubernetes.io/hostname
+                      operator: In
+                      values: ["talos01"]
         # Discovered live during 39-01 Task 3: talos02 (the node D-01/D-02 measured as the
         # only one with request headroom) carries a stale dedicated=frigate:NoSchedule taint
         # left over from eac3ac1d, even though 2273acd4 moved Frigate itself off talos02 in

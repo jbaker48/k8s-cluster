@@ -92,6 +92,47 @@
       "automerge": false
     },
     // groups
+    // Broad non-major groups come first so the specific groups below override them.
+    // Talos, Kubernetes, Cilium, Rook-Ceph and Flux are excluded and keep their own rules.
+    {
+      "description": "One PR for non-major container image updates.",
+      "groupName": "non-major container images",
+      "matchDatasources": ["docker"],
+      "matchUpdateTypes": ["minor", "patch", "digest"],
+      "matchPackageNames": ["*", "!/siderolabs\\//", "!/cilium/", "!rook-ceph", "!rook-ceph-cluster", "!/(^|/)kube(let|-apiserver|-controller-manager|-scheduler|-proxy|ctl)$/", "!/fluxcd/", "!/(^|/)charts?//"],
+      "group": {
+        "commitMessageTopic": "{{{groupName}}}"
+      }
+    },
+    {
+      "description": "One PR for non-major Helm chart updates (HTTP repositories).",
+      "groupName": "non-major helm charts",
+      "matchDatasources": ["helm"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "matchPackageNames": ["*", "!/siderolabs\\//", "!/cilium/", "!rook-ceph", "!rook-ceph-cluster", "!/(^|/)kube(let|-apiserver|-controller-manager|-scheduler|-proxy|ctl)$/", "!/fluxcd/"],
+      "group": {
+        "commitMessageTopic": "{{{groupName}}}"
+      }
+    },
+    {
+      "description": "OCI-hosted charts join the Helm chart group.",
+      "groupName": "non-major helm charts",
+      "matchDatasources": ["docker"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "matchPackageNames": ["/(^|/)charts?//", "!/siderolabs\\//", "!/cilium/", "!rook-ceph", "!rook-ceph-cluster", "!/(^|/)kube(let|-apiserver|-controller-manager|-scheduler|-proxy|ctl)$/", "!/fluxcd/"],
+      "group": {
+        "commitMessageTopic": "{{{groupName}}}"
+      }
+    },
+    {
+      "description": "One PR for non-major GitHub Actions updates.",
+      "groupName": "non-major github actions",
+      "matchManagers": ["github-actions"],
+      "matchUpdateTypes": ["minor", "patch", "digest", "pin", "pinDigest"],
+      "group": {
+        "commitMessageTopic": "{{{groupName}}}"
+      }
+    },
     {
       "description": "Group Flux dependencies.",
       "groupName": "Flux",

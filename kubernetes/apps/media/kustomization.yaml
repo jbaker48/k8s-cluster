@@ -8,7 +8,6 @@ resources:
   - ./namespace.yaml
   - ./bazarr/ks.yaml
   - ./lidarr/ks.yaml
-  - ./overseerr/ks.yaml
   - ./photoprism/ks.yaml
   - ./plex/ks.yaml
   - ./prowlarr/ks.yaml

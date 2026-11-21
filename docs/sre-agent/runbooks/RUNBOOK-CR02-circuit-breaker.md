@@ -1,4 +1,5 @@
 # RUNBOOK — CR-02: prove the `unscoped` circuit-breaker bucket is actually enforced
+> Execution is now driven by live-verification-2026-10.md; this file is background.
 
 **Quick task:** 260812-oje
 **Closes:** WINDOWS.md #6 (open, unrun-verify) · 05-UAT.md Test 2

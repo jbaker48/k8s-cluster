@@ -27,7 +27,6 @@ resources:
   - ./piraeus.yaml
   - ./prometheus-community.yaml
   # - ./redis-operator.yaml
-  - ./robusta.yaml
   - ./rook-ceph.yaml
   - ./spegel.yaml
   - ./stakater.yaml

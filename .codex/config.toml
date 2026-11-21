@@ -1,6 +1,4 @@
 # Project-scoped Codex configuration for k8s-cluster.
-# Workflow rationale: docs/dynamic-workflow.md. lane.sh pins model, effort and
-# sandbox on every delegated exec; these are only the interactive defaults.
 
 # Sol is the cheap Codex-side coordinator (6.1 is the current Sol).
 model = "gpt-6.1-sol"
@@ -45,7 +43,3 @@ enabled = false
 
 [mcp_servers.playwright]
 enabled = false
-
-# Beads context hooks are part of the shared workflow.
-[features]
-hooks = true

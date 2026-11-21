@@ -5,7 +5,7 @@ References: `k8s-19y`, `k8s-2cc`
 
 The AI-review pipeline is the single owner of auto-merge: the deterministic
 exclusion gate, AI review, then health gate with auto-revert. Auto-merge go-live
-is tracked in epic `k8s-zdb.6` and issue `k8s-zdb.6.1`. Until that ships, the
+is tracked in #1201 (formerly Beads epic `k8s-zdb.6` and issue `k8s-zdb.6.1`). Until that ships, the
 owner merges PRs manually.
 
 Renovate only opens PRs. Its config explicitly disables auto-merge, limits open

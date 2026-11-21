@@ -98,3 +98,33 @@ roleRef:
   kind: ClusterRole
   name: devin-readonly
   apiGroup: rbac.authorization.k8s.io
+---
+# yaml-language-server: $schema=https://kubernetes-schemas.pages.dev/rbac.authorization.k8s.io/clusterrole_v1.json
+# GET-only proxy to Prometheus and Loki query APIs (usage history, etcd and
+# disk latency). POST/admin endpoints stay denied because only `get` is allowed.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: devin-readonly-metrics-proxy
+rules:
+  - apiGroups: [""]
+    resources: ["services/proxy"]
+    resourceNames:
+      - kube-prometheus-stack-prometheus
+      - kube-prometheus-stack-prometheus:9090
+      - loki
+      - loki:3100
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: devin-readonly-metrics-proxy
+subjects:
+  - kind: ServiceAccount
+    name: devin-readonly
+    namespace: kube-system
+roleRef:
+  kind: ClusterRole
+  name: devin-readonly-metrics-proxy
+  apiGroup: rbac.authorization.k8s.io

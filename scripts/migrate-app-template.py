@@ -32,7 +32,6 @@ APPS_TO_MIGRATE = [
     "media/photoprism/app",
     "media/plex/app",
     "media/prowlarr/app",
-    "media/qbittorrent/app",
     "media/radarr/app",
     "media/recyclarr/app",
     "media/sabnzbd/app",

@@ -25,20 +25,9 @@ spec:
   values:
     githubConfigUrl: "https://github.com/jbaker48/garmin-ai-coach"
     githubConfigSecret: arc-github-secret-garmin-ci-dind
-    # D-02 revised value (post cluster-rebuild, 39-02 continuation): capped to maxRunners: 1,
-    # NOT the originally-planned 2. 39-CONTEXT.md's per-node table is stale -- it assumed a
-    # healthier node layout that no longer holds after the rebuild. Live headroom by memory
-    # request as of this change: talos01 ~83% requested (~3.8Gi free, too tight for a 4Gi-request
-    # Pod), talos02 ~24% requested (~36Gi free -- the only node with real room), talos03 ~98%
-    # requested (effectively full). One dind Pod (500m CPU / 4Gi requests / 12Gi limits) fits
-    # talos02 comfortably; two would stack 24Gi of limits onto that single node. Revisit upward
-    # once node headroom allows -- see 39-02-SUMMARY.md follow-ups. minRunners: 0 per D-03,
-    # matching the k8s-cluster-ci/ha-restarter/garmin-ci convention.
+    # Sized jointly with garmin-ci; see the comment above maxRunners in
+    # ../../../arc-runners/garmin-ci/app/helmrelease.yaml (garmin-ai-coach#694).
     minRunners: 0
-    # 2026-10-11 (garmin-ai-coach n2g4.4): re-created in its own namespace for Docker-bundling
-    # jobs that need no arm64 emulation. 2026-11-21: raised 2 -> 4 when the x86 deploy jobs, cdk-synth
-    # and build-web moved here from the workstation. Each Pod requests 500m CPU / 4Gi; live headroom
-    # by memory request that day: talos01 91%, talos02 78% (~10Gi free), talos03 58% (~16Gi free).
     maxRunners: 4
     controllerServiceAccount:
       namespace: arc-systems

@@ -67,7 +67,8 @@ spec:
               requests:
                 cpu: 100m
                 gpu.intel.com/i915: 1
-                memory: 2Gi
+                # 3-day peak working set was 132 MiB (2026-11-21); 2Gi blocked CI on talos01.
+                memory: 512Mi
               limits:
                 gpu.intel.com/i915: 1
                 memory: 9248M

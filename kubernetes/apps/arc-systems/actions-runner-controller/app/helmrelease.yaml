@@ -22,8 +22,3 @@ spec:
       retries: 3
   values:
     replicaCount: 1
-    flags:
-      # Drain busy runners before replacing a runner template; new jobs queue
-      # without a listener until those runners drain.
-      # https://github.com/actions/actions-runner-controller/blob/gha-runner-scale-set-0.14.2/charts/gha-runner-scale-set-controller/values.yaml
-      updateStrategy: eventual

@@ -2,25 +2,20 @@
 # yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
 name: "AI Review"
 
-# Automatic pull_request_target trigger deliberately removed (see 04-01-SUMMARY.md
-# deviations): pr-reviewer-action's GitHub-platform comment publish path uses
-# `gh pr comment --edit-last`, which edits the LAST comment posted by the
-# authenticated identity — not a marker-based lookup. This workflow's
-# github_token (the default GITHUB_TOKEN, identity github-actions[bot]) is the
-# SAME identity flux-diff.yaml's mshick/add-pr-comment step uses, so a live run
-# can silently overwrite an unrelated flux-diff comment (confirmed: it happened
-# to PR #1063's helmrelease diff comment during Plan 04-01's proof runs).
+# Runs as the dedicated ai-review GitHub App (AI_REVIEW_APP_*), not
+# github-actions[bot]. pr-reviewer-action publishes with `gh pr comment
+# --edit-last`, which edits the last comment of the authenticated identity;
+# sharing github-actions[bot] with flux-diff.yaml once overwrote a Flux Diff
+# comment (04-01-SUMMARY.md), so the trigger stays tied to the separate App.
 #
-# Plan 04-02 temporarily restored this trigger for its draft-skip/concurrency-dedup
-# live-proof window (2026-08-05T11:04Z-11:07Z, throwaway PR #1076/branch
-# test/ai-review-draft-skip, closed and branch-deleted after verification; see
-# 04-02-SUMMARY.md Deviations) and confirmed no other PR's comments were touched
-# during that window before removing it again here.
-#
-# workflow_dispatch-only until a dedicated bot identity (PAT/GitHub App) for
-# this workflow removes the shared-identity collision — then restore
-# pull_request_target with types: [opened, reopened, synchronize, ready_for_review].
+# auto-merge: merges an AI-approved PR from AUTOMERGE_AUTHORS once Exclusion
+# Check (and Flux Diff when kubernetes/** changed) pass and the PR has no
+# gate/human-required label (hard exclusion or circuit breaker). The merge is
+# made with the App token so the push to main triggers health-gate.yaml, which
+# owns rollback via the revert-bot App. See docs/sre-agent/AUTOMERGE-OWNER.md.
 on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, ready_for_review]
   workflow_dispatch:
     inputs:
       repo:
@@ -48,12 +43,32 @@ concurrency:
 jobs:
   review:
     name: AI PR Review
+    # Fork PRs never get secrets or a review under pull_request_target.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: k8s-cluster-ci
     timeout-minutes: 15
     permissions:
       contents: read
-      pull-requests: write
+    outputs:
+      verdict: ${{ steps.review.outputs.verdict }}
+      draft: ${{ steps.pr.outputs.draft }}
+      head_sha: ${{ steps.pr.outputs.head_sha }}
+      pr_number: ${{ steps.pr.outputs.pr_number }}
+      repo: ${{ steps.pr.outputs.repo }}
     steps:
+      - name: Exchange ai-review App token
+        id: app-token
+        uses: >-
+          actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
+        with:
+          app-id: ${{ secrets.AI_REVIEW_APP_ID }}
+          private-key: ${{ secrets.AI_REVIEW_APP_PRIVATE_KEY }}
+          permission-contents: read
+          permission-pull-requests: write
+          permission-checks: read
+
       - name: Bootstrap gh CLI and python3 (not preinstalled on this runner image)
         run: |
           set -euo pipefail
@@ -88,13 +103,16 @@ jobs:
         id: pr
         run: |
           set -euo pipefail
-          gh pr view "${{ inputs.pr_number }}" \
-            --repo "${{ inputs.repo || github.repository }}" \
-            --json isDraft,baseRefOid \
-            --jq '"draft=\(.isDraft)\nbase_sha=\(.baseRefOid)"' \
+          gh pr view "$PR_NUMBER" --repo "$REPO" \
+            --json isDraft,baseRefOid,headRefOid \
+            --jq '"draft=\(.isDraft)\nbase_sha=\(.baseRefOid)\nhead_sha=\(.headRefOid)"' \
             >> "$GITHUB_OUTPUT"
+          echo "pr_number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
+          echo "repo=$REPO" >> "$GITHUB_OUTPUT"
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          PR_NUMBER: ${{ inputs.pr_number || github.event.pull_request.number }}
+          REPO: ${{ inputs.repo || github.repository }}
 
       - name: Checkout base branch
         if: ${{ steps.pr.outputs.draft != 'true' }}
@@ -103,12 +121,13 @@ jobs:
           ref: ${{ steps.pr.outputs.base_sha }}
 
       - name: AI PR Review
+        id: review
         if: ${{ steps.pr.outputs.draft != 'true' }}
         uses: misospace/pr-reviewer-action@a962cdfc21c378a3b8cf2d8b194c787408e60e6b # v2.5.0
         with:
-          github_token: ${{ github.token }}
-          repo: ${{ inputs.repo || github.repository }}
-          pr_number: ${{ inputs.pr_number }}
+          github_token: ${{ steps.app-token.outputs.token }}
+          repo: ${{ steps.pr.outputs.repo }}
+          pr_number: ${{ steps.pr.outputs.pr_number }}
           ai_base_url: "https://litellm.${{ secrets.SECRET_DOMAIN }}/v1"
           ai_api_format: openai
           ai_model: deepseek-v4-flash
@@ -126,7 +145,7 @@ jobs:
           tool_planning_timeout_sec: "60"
           tool_planning_max_context_bytes: "30000"
           tool_planning_max_tokens: "8000"
-          tool_allowed_gh_api_repos: "${{ inputs.repo || github.repository }}"
+          tool_allowed_gh_api_repos: "${{ steps.pr.outputs.repo }}"
           tool_enable_for_forks: "false"
           tool_mcp_servers: "konflate=http://konflate.ai.svc.cluster.local:8080/mcp"
           standards_file: .claude/CLAUDE.md
@@ -151,3 +170,87 @@ jobs:
           else
             echo "tool-harness.md not found (tool_mode may be off, or the loop degraded before any call)"
           fi
+
+  auto-merge:
+    name: AI Auto-merge
+    needs: review
+    if: >-
+      needs.review.outputs.verdict == 'approve' &&
+      needs.review.outputs.draft != 'true' &&
+      needs.review.outputs.repo == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions: {}
+    env:
+      AUTOMERGE_AUTHORS: "renovate[bot]"
+      REPO: ${{ needs.review.outputs.repo }}
+      PR_NUMBER: ${{ needs.review.outputs.pr_number }}
+      HEAD_SHA: ${{ needs.review.outputs.head_sha }}
+    steps:
+      - name: Exchange ai-review App token
+        id: app-token
+        uses: >-
+          actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
+        with:
+          app-id: ${{ secrets.AI_REVIEW_APP_ID }}
+          private-key: ${{ secrets.AI_REVIEW_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-checks: read
+
+      - name: Wait for gates, then merge
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          pr() { gh api "repos/${REPO}/pulls/${PR_NUMBER}"; }
+
+          AUTHOR=$(pr | jq -r '.user.login')
+          if ! tr ',' '\n' <<<"$AUTOMERGE_AUTHORS" | grep -qxF "$AUTHOR"; then
+            echo "::notice::Author ${AUTHOR} is not in AUTOMERGE_AUTHORS; leaving PR #${PR_NUMBER} for the owner."
+            exit 0
+          fi
+
+          REQUIRED=("Exclusion Check")
+          if gh api --paginate "repos/${REPO}/pulls/${PR_NUMBER}/files" --jq '.[].filename' \
+               | grep -q '^kubernetes/'; then
+            REQUIRED+=("Flux Diff (kubernetes, helmrelease)" "Flux Diff (kubernetes, kustomization)")
+          fi
+
+          deadline=$((SECONDS + 900))
+          while :; do
+            RUNS=$(gh api "repos/${REPO}/commits/${HEAD_SHA}/check-runs?per_page=100" --jq '.check_runs')
+            pending=0
+            for name in "${REQUIRED[@]}"; do
+              state=$(jq -r --arg n "$name" \
+                '[.[] | select(.name == $n)] | max_by(.id) // {} | "\(.status // "missing")/\(.conclusion // "")"' \
+                <<<"$RUNS")
+              case "$state" in
+                completed/success) ;;
+                completed/*)
+                  echo "::notice::${name} is ${state}; leaving PR #${PR_NUMBER} for the owner."
+                  exit 0 ;;
+                *) pending=1 ;;
+              esac
+            done
+            [ "$pending" -eq 0 ] && break
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              echo "::notice::Gates did not finish within 15 minutes; leaving PR #${PR_NUMBER} for the owner."
+              exit 0
+            fi
+            sleep 30
+          done
+
+          PR_JSON=$(pr)
+          if jq -e '[.labels[].name] | index("gate/human-required")' <<<"$PR_JSON" >/dev/null; then
+            echo "::notice::PR #${PR_NUMBER} is labelled gate/human-required (hard exclusion or circuit breaker)."
+            exit 0
+          fi
+          if [ "$(jq -r '.state' <<<"$PR_JSON")" != "open" ] || [ "$(jq -r '.draft' <<<"$PR_JSON")" = "true" ]; then
+            echo "::notice::PR #${PR_NUMBER} is no longer an open, ready PR."
+            exit 0
+          fi
+
+          # --match-head-commit refuses the merge if anything was pushed after the review.
+          gh pr merge "$PR_NUMBER" --repo "$REPO" --squash --match-head-commit "$HEAD_SHA"
+          echo "::notice::Merged PR #${PR_NUMBER} at ${HEAD_SHA}; health-gate.yaml now watches the rollout."

@@ -26,31 +26,19 @@ spec:
     githubConfigUrl: "https://github.com/jbaker48/garmin-ai-coach"
     githubConfigSecret: arc-github-secret-garmin-ci
     minRunners: 0
-    # m0xa (2026-09-07): maxRunners raised 2 -> 6 AND the runner request lowered 500m/4Gi ->
-    # 300m/2Gi, per the decision on garmin-ai-coach-1013. The two go together: maxRunners: 6 at
-    # the old 500m/4Gi request does NOT fit -- Kubernetes schedules on requests, not usage, so
-    # pods 5 and 6 would sit Pending on a physically idle cluster. Re-derived from a live
-    # 2026-09-07T07:35Z reading taken with ZERO garmin-ci runner pods running, so these are
-    # absolute totals, not increments. Same formula as the 39-07 block this replaces:
-    # cap(node) = floor(min(free_cpu*0.8/req_cpu, free_mem*0.8/req_mem)), 0.8 reserve so a
-    # saturated runner pool cannot make a node unschedulable for anything else.
-    #   at the OLD 500m/4Gi:
-    #     talos01: free 4235m CPU / 10.43Gi mem -> mem-bound -> cap 2
-    #     talos02: free 1395m CPU / 29.18Gi mem -> cpu-bound -> cap 2
-    #     talos03: free  405m CPU /  3.57Gi mem -> cpu-bound -> cap 0
-    #     sum = 4  -- which is why 6 could not schedule.
-    #   at the NEW 300m/2Gi:
-    #     talos01: free 4235m CPU / 10.43Gi mem -> mem-bound -> cap 4
-    #     talos02: free 1395m CPU / 29.18Gi mem -> cpu-bound -> cap 3
-    #     talos03: free  405m CPU /  3.57Gi mem -> cpu-bound -> cap 1
-    #     sum = 8  -- 6 fits with 2 slots of margin.
-    # The nodes are idle in reality and it is the REQUEST that binds: at this same reading
-    # talos02 had 82% of CPU requested but was using 15%, talos03 94% requested / 22% used, and
-    # the runner pod is the worst over-requester in the namespace (reserved 500m/4Gi, observed
-    # using 227m CPU / 302Mi memory). Lowering the request corrects the reservation toward
-    # observed usage; it does not give the job less memory, because limits.memory stays 8Gi.
-    # Note the 39-07 block this replaces summed free memory across all three nodes; capacity is
-    # per node and the arithmetic above is per node.
+    # Since #1217, garmin-ci (300m/2Gi) and garmin-ci-dind (pod 500m/4Gi:
+    # runner 250m/2Gi + dind 250m/2Gi) share only talos01/talos03; size jointly.
+    # Pending runners count toward maxRunners. talos02 is excluded (#1208).
+    # cap(node) = floor(min(free_cpu*0.8/req_cpu, free_mem*0.8/req_mem))
+    # PROVISIONAL 2026-11-21: no idle live read; source is the 02:04Z node table
+    # in k8s-cluster#1210/#1208 work, including running runners (free-capacity lower bound).
+    # talos01: 16 cores, 28% CPU / 91% memory requested of 24GB before the same-day
+    # upgrade to 48GB; subtract 1.5Gi requests freed by the plex cut (#1219).
+    # Free >= ~11.5 cores / ~26Gi on ~46Gi allocatable; 0.8 budget ~9.2 cores / ~20.8Gi.
+    # talos03: 98% CPU requested at that reading; count as 0 slots.
+    # Joint budget is memory-bound: 6 x 2Gi + 2 x 4Gi = 20Gi <= 20.8Gi;
+    # CPU: 6 x 300m + 2 x 500m = 2.8 cores. Requests unchanged: bootstrap jest
+    # memory needs; no usage data supports cutting. Live re-derivation: garmin-ai-coach#694.
     # Re-derive these numbers before changing the value again; do not just bump the integer.
     maxRunners: 6
     controllerServiceAccount:

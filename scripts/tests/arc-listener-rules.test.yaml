@@ -1,0 +1,163 @@
+---
+# yaml-language-server: $schema=https://www.schemastore.org/prometheus.rules.test.json
+# Run with python3 scripts/test-arc-listener-rules.py (extracts the deployed spec).
+rule_files:
+  - rules.yaml
+evaluation_interval: 1m
+tests:
+  - name: Both listener series entirely absent
+    interval: 1m
+    input_series: []
+    alert_rule_test:
+      - eval_time: 14m
+        alertname: ARCListenerNotRunning
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: ARCListenerNotRunning
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              namespace: arc-systems
+              scale_set: garmin-ci
+            exp_annotations:
+              summary: 'ARC listener for garmin-ci has not been Running for 15 minutes. Likely cause: runner image below GitHub''s minimum; merge the Renovate "ARC runner image" PR. See https://github.com/jbaker48/k8s-cluster/blob/main/docs/sre-agent/AUTOMERGE-OWNER.md#arc-runner-image-tracking'
+          - exp_labels:
+              severity: critical
+              namespace: arc-systems
+              scale_set: garmin-ci-dind
+            exp_annotations:
+              summary: 'ARC listener for garmin-ci-dind has not been Running for 15 minutes. Likely cause: runner image below GitHub''s minimum; merge the Renovate "ARC runner image" PR. See https://github.com/jbaker48/k8s-cluster/blob/main/docs/sre-agent/AUTOMERGE-OWNER.md#arc-runner-image-tracking'
+      - eval_time: 20m
+        alertname: ARCListenerNotRunning
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              namespace: arc-systems
+              scale_set: garmin-ci
+            exp_annotations:
+              summary: 'ARC listener for garmin-ci has not been Running for 15 minutes. Likely cause: runner image below GitHub''s minimum; merge the Renovate "ARC runner image" PR. See https://github.com/jbaker48/k8s-cluster/blob/main/docs/sre-agent/AUTOMERGE-OWNER.md#arc-runner-image-tracking'
+          - exp_labels:
+              severity: critical
+              namespace: arc-systems
+              scale_set: garmin-ci-dind
+            exp_annotations:
+              summary: 'ARC listener for garmin-ci-dind has not been Running for 15 minutes. Likely cause: runner image below GitHub''s minimum; merge the Renovate "ARC runner image" PR. See https://github.com/jbaker48/k8s-cluster/blob/main/docs/sre-agent/AUTOMERGE-OWNER.md#arc-runner-image-tracking'
+  - name: Both listeners Running
+    interval: 1m
+    input_series:
+      - series: 'kube_pod_status_phase{namespace="arc-systems",pod="garmin-ci-7545b4b5-listener",phase="Running"}'
+        values: '1+0x25'
+      - series: 'kube_pod_status_phase{namespace="arc-systems",pod="garmin-ci-dind-7545b4b5-listener",phase="Running"}'
+        values: '1+0x25'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: ARCListenerNotRunning
+        exp_alerts: []
+  - name: DinD listener cannot satisfy garmin-ci
+    interval: 1m
+    input_series:
+      - series: 'kube_pod_status_phase{namespace="arc-systems",pod="garmin-ci-dind-7545b4b5-listener",phase="Running"}'
+        values: '1+0x25'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: ARCListenerNotRunning
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              namespace: arc-systems
+              scale_set: garmin-ci
+            exp_annotations:
+              summary: 'ARC listener for garmin-ci has not been Running for 15 minutes. Likely cause: runner image below GitHub''s minimum; merge the Renovate "ARC runner image" PR. See https://github.com/jbaker48/k8s-cluster/blob/main/docs/sre-agent/AUTOMERGE-OWNER.md#arc-runner-image-tracking'
+  - name: garmin-ci listener cannot satisfy DinD
+    interval: 1m
+    input_series:
+      - series: 'kube_pod_status_phase{namespace="arc-systems",pod="garmin-ci-7545b4b5-listener",phase="Running"}'
+        values: '1+0x25'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: ARCListenerNotRunning
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              namespace: arc-systems
+              scale_set: garmin-ci-dind
+            exp_annotations:
+              summary: 'ARC listener for garmin-ci-dind has not been Running for 15 minutes. Likely cause: runner image below GitHub''s minimum; merge the Renovate "ARC runner image" PR. See https://github.com/jbaker48/k8s-cluster/blob/main/docs/sre-agent/AUTOMERGE-OWNER.md#arc-runner-image-tracking'
+  - name: Existing but non-Running listeners
+    interval: 1m
+    input_series:
+      - series: 'kube_pod_status_phase{namespace="arc-systems",pod="garmin-ci-7545b4b5-listener",phase="Running"}'
+        values: '0+0x25'
+      - series: 'kube_pod_status_phase{namespace="arc-systems",pod="garmin-ci-dind-7545b4b5-listener",phase="Running"}'
+        values: '0+0x25'
+    alert_rule_test:
+      - eval_time: 14m
+        alertname: ARCListenerNotRunning
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: ARCListenerNotRunning
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              namespace: arc-systems
+              scale_set: garmin-ci
+            exp_annotations:
+              summary: 'ARC listener for garmin-ci has not been Running for 15 minutes. Likely cause: runner image below GitHub''s minimum; merge the Renovate "ARC runner image" PR. See https://github.com/jbaker48/k8s-cluster/blob/main/docs/sre-agent/AUTOMERGE-OWNER.md#arc-runner-image-tracking'
+          - exp_labels:
+              severity: critical
+              namespace: arc-systems
+              scale_set: garmin-ci-dind
+            exp_annotations:
+              summary: 'ARC listener for garmin-ci-dind has not been Running for 15 minutes. Likely cause: runner image below GitHub''s minimum; merge the Renovate "ARC runner image" PR. See https://github.com/jbaker48/k8s-cluster/blob/main/docs/sre-agent/AUTOMERGE-OWNER.md#arc-runner-image-tracking'
+  - name: Deleted listeners and recovery
+    interval: 1m
+    input_series:
+      - series: 'kube_pod_status_phase{namespace="arc-systems",pod="garmin-ci-7545b4b5-listener",phase="Running"}'
+        values: '1 stale _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 1+0x5'
+      - series: 'kube_pod_status_phase{namespace="arc-systems",pod="garmin-ci-dind-7545b4b5-listener",phase="Running"}'
+        values: '1 stale _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 1+0x5'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: ARCListenerNotRunning
+        exp_alerts: []
+      - eval_time: 16m
+        alertname: ARCListenerNotRunning
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              namespace: arc-systems
+              scale_set: garmin-ci
+            exp_annotations:
+              summary: 'ARC listener for garmin-ci has not been Running for 15 minutes. Likely cause: runner image below GitHub''s minimum; merge the Renovate "ARC runner image" PR. See https://github.com/jbaker48/k8s-cluster/blob/main/docs/sre-agent/AUTOMERGE-OWNER.md#arc-runner-image-tracking'
+          - exp_labels:
+              severity: critical
+              namespace: arc-systems
+              scale_set: garmin-ci-dind
+            exp_annotations:
+              summary: 'ARC listener for garmin-ci-dind has not been Running for 15 minutes. Likely cause: runner image below GitHub''s minimum; merge the Renovate "ARC runner image" PR. See https://github.com/jbaker48/k8s-cluster/blob/main/docs/sre-agent/AUTOMERGE-OWNER.md#arc-runner-image-tracking'
+      - eval_time: 20m
+        alertname: ARCListenerNotRunning
+        exp_alerts: []
+  - name: Running in the wrong namespace does not satisfy listeners
+    interval: 1m
+    input_series:
+      - series: 'kube_pod_status_phase{namespace="arc-runners",pod="garmin-ci-7545b4b5-listener",phase="Running"}'
+        values: '1+0x25'
+      - series: 'kube_pod_status_phase{namespace="arc-runners-dind",pod="garmin-ci-dind-7545b4b5-listener",phase="Running"}'
+        values: '1+0x25'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: ARCListenerNotRunning
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              namespace: arc-systems
+              scale_set: garmin-ci
+            exp_annotations:
+              summary: 'ARC listener for garmin-ci has not been Running for 15 minutes. Likely cause: runner image below GitHub''s minimum; merge the Renovate "ARC runner image" PR. See https://github.com/jbaker48/k8s-cluster/blob/main/docs/sre-agent/AUTOMERGE-OWNER.md#arc-runner-image-tracking'
+          - exp_labels:
+              severity: critical
+              namespace: arc-systems
+              scale_set: garmin-ci-dind
+            exp_annotations:
+              summary: 'ARC listener for garmin-ci-dind has not been Running for 15 minutes. Likely cause: runner image below GitHub''s minimum; merge the Renovate "ARC runner image" PR. See https://github.com/jbaker48/k8s-cluster/blob/main/docs/sre-agent/AUTOMERGE-OWNER.md#arc-runner-image-tracking'

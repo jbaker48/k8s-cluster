@@ -63,6 +63,18 @@ spec:
       spec:
         serviceAccountName: garmin-ci
         automountServiceAccountToken: false
+        # talos02's NVMe system disk (etcd + kubelet ephemeral storage) hits
+        # 200-1000ms write latency under CI build writes while talos01/03 stay
+        # under 15ms (#1208). Prefer the other nodes; talos02 stays a fallback.
+        affinity:
+          nodeAffinity:
+            preferredDuringSchedulingIgnoredDuringExecution:
+              - weight: 100
+                preference:
+                  matchExpressions:
+                    - key: kubernetes.io/hostname
+                      operator: NotIn
+                      values: ["talos02"]
         # Discovered live during 39-01 Task 3: talos02 (the node D-01/D-02 measured as the
         # only one with request headroom) carries a stale dedicated=frigate:NoSchedule taint
         # left over from eac3ac1d, even though 2273acd4 moved Frigate itself off talos02 in

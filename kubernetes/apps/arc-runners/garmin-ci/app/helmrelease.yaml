@@ -30,17 +30,20 @@ spec:
     # runner 250m/2Gi + dind 250m/2Gi) share only talos01/talos03; size jointly.
     # Pending runners count toward maxRunners. talos02 is excluded (#1208).
     # cap(node) = floor(min(free_cpu*0.8/req_cpu, free_mem*0.8/req_mem))
-    # PROVISIONAL 2026-11-21: no idle live read; source is the 02:04Z node table
-    # in k8s-cluster#1210/#1208 work, including running runners (free-capacity lower bound).
-    # talos01: 16 cores, 28% CPU / 91% memory requested of 24GB before the same-day
-    # upgrade to 48GB; subtract 1.5Gi requests freed by the plex cut (#1219).
-    # Free >= ~11.5 cores / ~26Gi on ~46Gi allocatable; 0.8 budget ~9.2 cores / ~20.8Gi.
-    # talos03: 98% CPU requested at that reading; count as 0 slots.
-    # Joint budget is memory-bound: 6 x 2Gi + 2 x 4Gi = 20Gi <= 20.8Gi;
-    # CPU: 6 x 300m + 2 x 500m = 2.8 cores. Requests unchanged: bootstrap jest
-    # memory needs; no usage data supports cutting. Live re-derivation: garmin-ai-coach#694.
+    # Live read via Jon's workstation, 2026-11-21 ~10:25Z (garmin-ai-coach#694):
+    # 5 garmin-ci + 3 dind on talos01, none on talos03; subtract runner requests
+    # (3000m/22Gi) for idle-equivalent free capacity, not incremental headroom.
+    # talos01: alloc ~16 cores/~46.5Gi; requests 7865m/41451Mi incl. runners;
+    # non-runner ~4865m/18.5Gi -> free ~11.1 cores/28.0Gi; budget ~8.9 cores/22.4Gi.
+    # talos03: alloc ~8 cores/~38.6Gi; requests 5555m/17792432Ki, no runners;
+    # free ~2.4 cores/21.6Gi; budget ~1.96 cores/17.3Gi. Solo caps (gc/dind): 11/5, 6/3.
+    # Joint: 8 x 2Gi + 4 x 4Gi = 32Gi <= ~39.7Gi; CPU 8 x 300m + 4 x 500m = 4.4 cores.
+    # Packing: talos01 4 dind + 3 gc = 22Gi/2.9 cores; talos03 5 gc = 10Gi/1.5 cores.
+    # No fragmentation: 2Gi units, budgets 11 + 8 vs demand 16; dind finds 2 free units.
+    # talos03 CPU cap (3 dind or 6 gc) spills onto talos01 within its budget.
+    # Requests unchanged: bootstrap jest memory needs; no usage data supports cutting.
     # Re-derive these numbers before changing the value again; do not just bump the integer.
-    maxRunners: 6
+    maxRunners: 8
     controllerServiceAccount:
       namespace: arc-systems
       name: actions-runner-controller-gha-rs-controller

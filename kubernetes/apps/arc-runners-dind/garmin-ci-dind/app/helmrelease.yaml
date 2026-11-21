@@ -26,9 +26,9 @@ spec:
     githubConfigUrl: "https://github.com/jbaker48/garmin-ai-coach"
     githubConfigSecret: arc-github-secret-garmin-ci-dind
     # Sized jointly with garmin-ci; see the comment above maxRunners in
-    # ../../../arc-runners/garmin-ci/app/helmrelease.yaml (provisional, garmin-ai-coach#694).
+    # ../../../arc-runners/garmin-ci/app/helmrelease.yaml (garmin-ai-coach#694).
     minRunners: 0
-    maxRunners: 2
+    maxRunners: 4
     controllerServiceAccount:
       namespace: arc-systems
       name: actions-runner-controller-gha-rs-controller

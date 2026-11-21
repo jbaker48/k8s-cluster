@@ -24,6 +24,12 @@ spec:
       retries: 3
   values:
     replicas: 1
+    resources:
+      requests:
+        cpu: 25m
+        memory: 64Mi
+      limits:
+        memory: 256Mi
     kind: Deployment
     deschedulerPolicyAPIVersion: descheduler/v1alpha2
     deschedulerPolicy:
@@ -47,6 +53,20 @@ spec:
                 constraints:
                   - DoNotSchedule
                   - ScheduleAnyway
+            - name: LowNodeUtilization
+              args:
+                thresholds:
+                  cpu: 40
+                  pods: 40
+                targetThresholds:
+                  cpu: 80
+                  pods: 70
+                evictableNamespaces:
+                  exclude:
+                    - kube-system
+                    - flux-system
+                    - rook-ceph
+                    - database
             - name: RemoveFailedPods
               args:
                 excludeOwnerKinds:
@@ -62,6 +82,7 @@ spec:
             balance:
               enabled:
                 - RemovePodsViolatingTopologySpreadConstraint
+                - LowNodeUtilization
             deschedule:
               enabled:
                 - RemovePodsViolatingInterPodAntiAffinity

@@ -33,7 +33,7 @@ spec:
               # ghcr.io token endpoint at plan-06 execution time (2026-08-29):
               #   curl -sI ".../v2/falcondev-oss/github-actions-cache-server/manifests/9.7.0"
               #   -> docker-content-digest: sha256:3999b0202ec509f3b2084ef92cc50b408838e0d442b5997dd6dff2d89f4fe7b4
-              tag: "9.7.0"
+              tag: "9.10.0"
             env:
               # Trailing slash required — must be byte-identical to CUSTOM_ACTIONS_RESULTS_URL
               # on garmin-ci's runner container (../garmin-ci/app/helmrelease.yaml). Addressed by

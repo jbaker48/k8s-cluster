@@ -61,13 +61,13 @@ spec:
         automountServiceAccountToken: false
         # talos02's NVMe system disk (etcd + kubelet ephemeral storage) hits
         # 200-1000ms write latency under CI build writes while talos01/03 stay
-        # under 15ms (#1208). Prefer the other nodes; talos02 stays a fallback.
+        # under 15ms (#1208). SMART shows 100% endurance used, so keep runners
+        # off talos02 entirely until the drive is replaced.
         affinity:
           nodeAffinity:
-            preferredDuringSchedulingIgnoredDuringExecution:
-              - weight: 100
-                preference:
-                  matchExpressions:
+            requiredDuringSchedulingIgnoredDuringExecution:
+              nodeSelectorTerms:
+                - matchExpressions:
                     - key: kubernetes.io/hostname
                       operator: NotIn
                       values: ["talos02"]

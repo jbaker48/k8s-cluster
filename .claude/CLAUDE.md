@@ -447,4 +447,4 @@ No project skills found. Add skills to any of: `.claude/skills/`, `.agents/skill
 
 ## Workflow
 
-Track all work in Beads (`bd`); see the root `CLAUDE.md` Beads section. Archived SRE-agent planning docs: `docs/sre-agent/`.
+Track all work in GitHub issues on this repo. Archived SRE-agent planning docs: `docs/sre-agent/`.

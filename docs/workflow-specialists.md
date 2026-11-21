@@ -1,6 +1,6 @@
 # k8s-cluster workflow specialists
 
-The `agent:<name>` label selects a domain, not a model. Routing, authority and handoffs are in [dynamic-workflow.md](dynamic-workflow.md). Worker contracts live in `.codex/agents/` and `.claude/agents/`; packets name the domain and do not paste this document.
+The `agent:<name>` label selects a domain, not a model. The retired multi-model routing and worker contracts are in `.archive/agent-workflow/`.
 
 All workers stay in the named worktree and scope, report changed files, commands/results, unmet clauses and a precise next action, and never weaken a gate to pass.
 

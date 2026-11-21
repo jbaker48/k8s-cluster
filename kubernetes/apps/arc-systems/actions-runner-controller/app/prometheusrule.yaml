@@ -1,0 +1,36 @@
+---
+# yaml-language-server: $schema=https://kubernetes-schemas.pages.dev/monitoring.coreos.com/prometheusrule_v1.json
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: arc-listeners
+spec:
+  groups:
+    - name: arc-listeners.rules
+      rules:
+        - alert: ARCListenerNotRunning
+          expr: |
+            absent(sum(kube_pod_status_phase{namespace="arc-systems",pod=~"garmin-ci-[^-]+-listener",phase="Running"} == 1))
+          for: 15m
+          labels:
+            severity: critical
+            namespace: arc-systems
+            scale_set: garmin-ci
+          annotations:
+            summary: >-
+              ARC listener for garmin-ci has not been Running for 15 minutes.
+              Likely cause: runner image below GitHub's minimum; merge the Renovate "ARC runner image" PR.
+              See https://github.com/jbaker48/k8s-cluster/blob/main/docs/sre-agent/AUTOMERGE-OWNER.md#arc-runner-image-tracking
+        - alert: ARCListenerNotRunning
+          expr: |
+            absent(sum(kube_pod_status_phase{namespace="arc-systems",pod=~"garmin-ci-dind-[^-]+-listener",phase="Running"} == 1))
+          for: 15m
+          labels:
+            severity: critical
+            namespace: arc-systems
+            scale_set: garmin-ci-dind
+          annotations:
+            summary: >-
+              ARC listener for garmin-ci-dind has not been Running for 15 minutes.
+              Likely cause: runner image below GitHub's minimum; merge the Renovate "ARC runner image" PR.
+              See https://github.com/jbaker48/k8s-cluster/blob/main/docs/sre-agent/AUTOMERGE-OWNER.md#arc-runner-image-tracking

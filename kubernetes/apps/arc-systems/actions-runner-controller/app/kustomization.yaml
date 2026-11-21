@@ -7,6 +7,7 @@ resources:
   - ./namespace.yaml
   - ./ocirepository.yaml
   - ./helmrelease.yaml
+  - ./prometheusrule.yaml
 labels:
   - pairs:
       app.kubernetes.io/name: actions-runner-controller

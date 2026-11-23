@@ -433,8 +433,11 @@ spec:
 
     # 2026-11-21 (garmin-ai-coach #634 follow-up): web-deployed-reachability moved here from the
     # workstation runner; its real browser loads the deployed dev web origin on Amplify Hosting.
+    # 2026-11-23 (garmin-ai-coach #707): Cilium's `*` does not cross a dot, so `*.amplifyapp.com`
+    # never matched the two-label branch host (build-web's /chat check timed out on DinD).
+    # Pinned to the dev branch host of the dev Amplify app (/platform/dev/hosting/default-domain).
     - toFQDNs:
-        - matchPattern: "*.amplifyapp.com"
+        - matchName: "dev.d288djta82bt41.amplifyapp.com"
       toPorts:
         - ports:
             - port: "443"

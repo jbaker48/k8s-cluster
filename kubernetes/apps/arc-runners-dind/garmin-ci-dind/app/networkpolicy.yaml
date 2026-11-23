@@ -199,9 +199,12 @@ spec:
     # 2026-11-21 (garmin-ai-coach #634 follow-up): the x86 deploy jobs and build-web moved here from
     # the workstation runner. build-web drives Amplify and checks the deployed origin; CDK image
     # bundling pulls ECR Public layers from the us-east-1 starport bucket.
+    # 2026-11-23 (garmin-ai-coach #707): Cilium's `*` does not cross a dot, so `*.amplifyapp.com`
+    # never matched the two-label branch host and build-web's /chat check timed out on connect.
+    # Pinned to the dev branch host of the dev Amplify app (/platform/dev/hosting/default-domain).
     - toFQDNs:
         - matchName: "amplify.us-west-2.amazonaws.com"
-        - matchPattern: "*.amplifyapp.com"
+        - matchName: "dev.d288djta82bt41.amplifyapp.com"
         - matchName: "prod-us-east-1-starport-layer-bucket.s3.us-east-1.amazonaws.com"
       toPorts:
         - ports:

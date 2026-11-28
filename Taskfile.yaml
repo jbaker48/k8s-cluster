@@ -22,7 +22,6 @@ includes:
   bootstrap: .taskfiles/bootstrap
   talos: .taskfiles/talos
   volsync: .taskfiles/volsync
-  rook: .taskfiles/rook-ceph
   # template: .taskfiles/template
 
 tasks:
@@ -83,7 +82,7 @@ tasks:
     cmd: echo "🎉 All validation checks completed successfully!"
 
   rebuild:preflight:
-    desc: Verify every backup is fresh before the Ceph to Miroir teardown
+    desc: Verify every backup is fresh before the Miroir teardown
     preconditions:
       - sh: which kubectl
         msg: kubectl is required

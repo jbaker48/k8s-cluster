@@ -78,7 +78,7 @@ talosctl get machineconfig    # Check Talos configuration
 - **`apps/`** - Application deployments organized by namespace
   - Each namespace (e.g., `home/`, `database/`, `media/`) contains apps
   - Each app follows structure: `<app-name>/ks.yaml` (Flux Kustomization) + `<app-name>/app/` (resources)
-  - Namespaces: ai, cert-manager, database, default, external-secrets, flux-system, home, kube-system, media, network, observability, openebs-system, rook-ceph, security, selfhosted, tools, volsync-system
+  - Namespaces: ai, cert-manager, database, default, external-secrets, flux-system, home, kube-system, media, network, observability, miroir-system, openebs-system, security, selfhosted, tools, volsync-system
 - **`components/`** - Shared Kustomize components (e.g., app-template repository definitions)
 - **`templates/`** - Reusable templates (volsync, helmrelease examples)
 
@@ -265,7 +265,7 @@ The repository enforces consistency through:
 - **SOPS + age** - Encrypted secret management
 - **Cilium** - eBPF-based container networking
 - **External Secrets Operator** - Syncs secrets to Kubernetes
-- **Rook Ceph** - Distributed storage
+- **Miroir** - Replicated block storage (DRBD)
 - **NVIDIA GPU Operator** - GPU support (if applicable)
 
 ## Troubleshooting

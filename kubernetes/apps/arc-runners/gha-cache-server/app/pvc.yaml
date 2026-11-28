@@ -5,7 +5,7 @@
 # in the miroir HelmRelease); the volume is a normal single-writer DRBD volume under the hood.
 # gha-cache-server runs strategy: Recreate with exactly one replica (see helmrelease.yaml), so
 # single-writer semantics for the SQLite metadata store hold regardless. The cache starts empty
-# after the Ceph-to-Miroir rebuild; it is a cache and refills on demand.
+# after the Miroir rebuild; it is a cache and refills on demand.
 #
 # Sizing: 20Gi, twice GitHub's own 10 GB/repo reference point (39-CONTEXT.md's stated yardstick),
 # combined with a 14-day cleanup window (CACHE_CLEANUP_OLDER_THAN_DAYS in helmrelease.yaml, shorter

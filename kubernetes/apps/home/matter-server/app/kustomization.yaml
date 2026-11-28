@@ -6,4 +6,5 @@ namespace: home
 resources:
   - ./helmrelease.yaml
   - ./ocirepository.yaml
+  - ../../../../templates/volsync/source
   - ./pvc.yaml

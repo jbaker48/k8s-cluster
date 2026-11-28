@@ -23,6 +23,8 @@ tasks:
     requires:
       vars: [IP]
     preconditions:
+      - sh: test '{{.MODE}}' != reboot
+        msg: MODE=reboot was removed in Talos 1.14
       - talosctl --nodes {{.IP}} get machineconfig
       - talosctl config info
       - test -f {{.TALOSCONFIG}}

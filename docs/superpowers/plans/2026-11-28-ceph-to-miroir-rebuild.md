@@ -32,7 +32,7 @@
 
 | Node | Miroir `default` pool device | Notes |
 |---|---|---|
-| talos01 | `/dev/disk/by-id/ata-NT-512_9110601100331` | **Unused 512GB SATA SSD**, found blank (no partitions or filesystem). Used instead of the 144%-worn MX500 (*plan's call, to confirm with the user before Task 5*). The MX500 `ata-CT500MX500SSD1_2432E8BE7312` is wiped and left unused. |
+| talos01 | `/dev/disk/by-id/ata-CT500MX500SSD1_2432E8BE7312` | CT500MX500SSD1 (user-chosen 2026-11-28). The NT-512 `ata-NT-512_9110601100331` is wiped and left unused. |
 | talos02 | `/dev/disk/by-id/ata-Timetec_SD08_TS250325A512G0088` | 15% wear |
 | talos03 | `/dev/disk/by-id/ata-CT500MX500SSD1_2403E88F7DD2` | 154% wear (option A accepted) |
 
@@ -162,7 +162,7 @@ Rebase this branch onto `main` after Phase A merges.
   - DRBD modules: use a `KernelModuleConfig` document if talhelper emits Talos 1.14 multi-doc; otherwise extend the existing `machine.kernel.modules` patch, which already loads `ax88179_178a`
   - kubelet graceful shutdown added to the existing kubelet `extraConfig` patch
   - talos02 and talos03: replace `installDisk: "/dev/nvme0n1"` with `installDiskSelector: { model: "Patriot M.2 P320 512GB" }`
-  - talos01: keep the `busPath` selector, and rewrite the comment: "Two SATA SSDs (NT-512, MX500) are data disks for Miroir and must never be selected as the install disk."
+  - talos01: keep the `busPath` selector, and rewrite the comment: "SATA SSDs (MX500 = Miroir pool, NT-512 unused) must never be selected as the install disk."
 - Modify: `.taskfiles/talos/Taskfile.yaml`: `MODE` must not offer `reboot`, which Talos 1.14 removed. Keep the default `auto`.
 - Modify: `.mise.toml`: only if Step 1 shows talhelper needs a newer pin.
 
@@ -219,7 +219,7 @@ git commit -am "feat(talos): v1.14.7 with DRBD for Miroir"
 **Interfaces:**
 - Produces: Flux Kustomization **`miroir-config`** in `flux-system`, which every app with a PVC depends on (Task 6). StorageClasses `miroir-replicated`, `miroir-local`. Snapshot class `miroir-snap`.
 
-- [ ] **Step 0: Confirm the talos01 disk choice (NT-512 instead of the MX500) with the user.** Update the disk map if they say otherwise.
+- [x] **Step 0: Confirm the talos01 disk choice.** Decided: MX500 (`ata-CT500MX500SSD1_2432E8BE7312`), 2026-11-28. The NT-512 is wiped and left unused.
 
 - [ ] **Step 1: Build and check the config**
 

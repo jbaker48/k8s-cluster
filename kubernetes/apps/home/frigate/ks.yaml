@@ -35,3 +35,5 @@ spec:
       APP: *app
       VOLSYNC_CAPACITY: 5Gi
       VOLSYNC_SCHEDULE: "5 * * * *"
+      # Data is root-owned (app runs privileged as root, lost+found is 0700); the mover must run as root.
+      VOLSYNC_MOVER_UID: "0"

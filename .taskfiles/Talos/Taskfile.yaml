@@ -7,12 +7,23 @@ tasks:
   generate-config:
     desc: Generate Talos configuration
     dir: '{{.TALOS_DIR}}'
-    cmd: talhelper genconfig
+    cmds:
+      - talhelper genconfig
+      # talhelper 3.1.17 builds against Talos machinery v1.14.0-alpha.2, which names the
+      # etcd secretbox key "key1". Talos 1.13 and 1.14.7 use "key2", and secrets already
+      # in etcd are tagged with that name, so a "key1" config can't decrypt them (#1228).
+      # Remove once `talhelper genconfig` output already shows "key2" (talhelper built on Talos machinery >= v1.14.0 GA).
+      # One file per yq call: `yq -i` given several files writes them all into the first.
+      - >-
+        for f in clusterconfig/*.yaml; do
+        yq -i '(select(.kind == "KubeEtcdEncryptionConfig") | .config.resources[].providers[] | select(has("secretbox")) | .secretbox.keys[]
+        | select(.name == "key1") | .name) = "key2"' "$f";
+        done
     preconditions:
       - test -f {{.TALOS_DIR}}/talconfig.yaml
       - test -f {{.ROOT_DIR}}/.sops.yaml
       - test -f {{.SOPS_AGE_KEY_FILE}}
-      - which talhelper
+      - which talhelper yq
 
   apply-node:
     desc: Apply Talos config to a node [IP=required]

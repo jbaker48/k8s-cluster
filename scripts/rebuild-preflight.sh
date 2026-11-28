@@ -47,6 +47,20 @@ echo "🔍 Rebuild pre-flight (max age: ${MAX_AGE_MINUTES}m)"
 # Check 1: every ReplicationSource synced successfully within the window.
 echo "--- Check 1: ReplicationSource freshness ---"
 SOURCES_JSON=$(kubectl get replicationsources.volsync.backube -A -o json)
+# Captured first so set -e aborts if jq fails (process substitution would hide it).
+CHECK1=$(jq -r --arg max "${MAX_AGE_MINUTES}" '
+    .items[] |
+    (.metadata.namespace + "/" + .metadata.name) as $k |
+    ($max | tonumber) as $max |
+    (.status.lastSyncTime // null) as $t |
+    (.status.latestMoverStatus.result // "none") as $r |
+    if $t == null then [$k, "bad", "no lastSyncTime"]
+    else
+        ((now - ($t | sub("\\.[0-9]+"; "") | fromdateiso8601)) / 60 | floor) as $age |
+        if $age > $max then [$k, "bad", "last sync \($age)m ago (> \($max)m)"]
+        elif $r != "Successful" then [$k, "bad", "last mover result: \($r)"]
+        else [$k, "ok", "synced \($age)m ago"] end
+    end | @tsv' <<<"${SOURCES_JSON}")
 while IFS=$'\t' read -r key verdict detail; do
     [[ -z "${key}" ]] && continue
     if [[ "${verdict}" == "ok" ]]; then
@@ -54,18 +68,7 @@ while IFS=$'\t' read -r key verdict detail; do
     else
         log_error "${key}: ${detail}"
     fi
-done < <(jq -r --argjson max "${MAX_AGE_MINUTES}" '
-    .items[] |
-    (.metadata.namespace + "/" + .metadata.name) as $k |
-    (.status.lastSyncTime // null) as $t |
-    (.status.latestMoverStatus.result // "none") as $r |
-    if $t == null then [$k, "bad", "no lastSyncTime"]
-    else
-        ((now - ($t | fromdateiso8601)) / 60 | floor) as $age |
-        if $age > $max then [$k, "bad", "last sync \($age)m ago (> \($max)m)"]
-        elif $r != "Successful" then [$k, "bad", "last mover result: \($r)"]
-        else [$k, "ok", "synced \($age)m ago"] end
-    end | @tsv' <<<"${SOURCES_JSON}")
+done <<<"${CHECK1}"
 
 # Check 2: every required ReplicationSource exists.
 echo "--- Check 2: required ReplicationSources present ---"
@@ -81,7 +84,8 @@ done
 # Check 3: newest CNPG backup completed within the window.
 echo "--- Check 3: CNPG backup ---"
 BACKUPS_JSON=$(kubectl get backup.postgresql.cnpg.io -n database -o json)
-CNPG_RESULT=$(jq -r --argjson max "${MAX_AGE_MINUTES}" '
+CNPG_RESULT=$(jq -r --arg maxs "${MAX_AGE_MINUTES}" '
+    ($maxs | tonumber) as $max |
     (.items | sort_by(.metadata.creationTimestamp) | last) as $b |
     if $b == null then "bad\tno backups found"
     elif ($b.status.phase // "none") != "completed" then "bad\t\($b.metadata.name) phase: \($b.status.phase // "none")"

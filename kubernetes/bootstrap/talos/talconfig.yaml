@@ -275,13 +275,6 @@ controlPlane:
             # Coral Edge M.2 TPU
             - SUBSYSTEMS=="usb", ATTRS{idVendor}=="1a6e", ATTRS{idProduct}=="089a", GROUP="20", MODE="0660"
 
-    # Disable the default PodSecurity admission plugin.
-    - |-
-      apiVersion: v1alpha1
-      kind: KubeAdmissionControlConfig
-      name: PodSecurity
-      $$patch: delete
-
     # Enable K8s Talos API Access
     - |-
       machine:

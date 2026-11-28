@@ -21,6 +21,7 @@ spec:
     - name: miroir-config
     - name: external-secrets-stores
     - name: mosquitto
+    - name: volsync
   wait: true
   interval: 30m
   retryInterval: 1m

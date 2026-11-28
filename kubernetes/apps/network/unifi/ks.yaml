@@ -12,6 +12,7 @@ spec:
   #     app.kubernetes.io/name: *app
   dependsOn:
     - name: miroir-config
+    - name: volsync
   path: ./kubernetes/apps/network/unifi/app
   prune: true
   sourceRef:

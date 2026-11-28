@@ -13,6 +13,7 @@ spec:
   dependsOn:
     - name: miroir-config
     - name: external-secrets-stores
+    - name: volsync
   path: ./kubernetes/apps/media/photoprism/app
   prune: true
   sourceRef:

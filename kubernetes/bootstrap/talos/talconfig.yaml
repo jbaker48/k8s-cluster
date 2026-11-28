@@ -25,8 +25,8 @@ cniConfig:
 nodes:
   - hostname: "talos01"
     ipAddress: "10.20.0.14"
-    # System disk is the NVMe M.2 (Patriot P320). Two SATA SSDs (NT-512, MX500)
-    # are data disks for Miroir and must never be selected as the install disk.
+    # System disk is the NVMe M.2 (Patriot P320). SATA SSDs (MX500 = Miroir pool,
+    # NT-512 unused) must never be selected as the install disk.
     installDiskSelector:
       busPath: /pci0000:00/0000:00:06.0/0000:01:00.0/*
     # talosImageURL: factory.talos.dev/installer/176603246fc5e700eec6b7044a57dd2bd0521b1d8da6e335c5c24bd66dafba4b

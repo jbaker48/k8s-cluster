@@ -147,6 +147,9 @@ controlPlane:
               parameters:
                 - usermode_helper=disabled
             - name: drbd_transport_tcp
+            # Miroir lvmthin pools: dm_thin_pool is =m in the Talos kernel and
+            # nothing autoloads it; the agent pod can't modprobe (EPERM)
+            - name: dm_thin_pool
     # Configure containerd
     - |-
       machine:

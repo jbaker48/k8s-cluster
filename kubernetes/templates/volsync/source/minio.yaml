@@ -36,7 +36,7 @@ spec:
     copyMethod: "${VOLSYNC_COPYMETHOD:-Snapshot}"
     pruneIntervalDays: 7
     repository: "${APP}-volsync-secret"
-    volumeSnapshotClassName: "${VOLSYNC_SNAPSHOTCLASS:-csi-miroir-replicatedpool}"
+    volumeSnapshotClassName: "${VOLSYNC_SNAPSHOTCLASS:-miroir-snap}"
     cacheCapacity: "${VOLSYNC_CACHE_CAPACITY:-8Gi}"
     cacheStorageClassName: "${VOLSYNC_CACHE_SNAPSHOTCLASS:-openebs-hostpath}"
     cacheAccessModes: ["${VOLSYNC_CACHE_ACCESSMODES:-ReadWriteOnce}"]
@@ -63,7 +63,7 @@ spec:
   restic:
     repository: "${APP}-volsync-secret"
     copyMethod: Snapshot # must be Snapshot
-    volumeSnapshotClassName: "${VOLSYNC_SNAPSHOTCLASS:-csi-miroir-replicatedpool}"
+    volumeSnapshotClassName: "${VOLSYNC_SNAPSHOTCLASS:-miroir-snap}"
     cacheStorageClassName: "${VOLSYNC_CACHE_SNAPSHOTCLASS:-openebs-hostpath}"
     cacheAccessModes: ["${VOLSYNC_CACHE_ACCESSMODES:-ReadWriteOnce}"]
     cacheCapacity: "${VOLSYNC_CACHE_CAPACITY:-8Gi}"

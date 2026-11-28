@@ -18,6 +18,7 @@ spec:
     kind: GitRepository
     name: home-kubernetes
   dependsOn:
+    - name: miroir-config
     - name: external-secrets-stores
     - name: mosquitto
   wait: true

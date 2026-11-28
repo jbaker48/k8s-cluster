@@ -1,8 +1,11 @@
 ---
-# D-07: CephFS RWX with the filesystem storage driver, not S3 — this cluster has no MinIO and
-# no CephObjectStore, so the S3 driver would mean standing up a second new component inside this
-# plan. RWX because gha-cache-server runs strategy: Recreate with exactly one replica (see
-# helmrelease.yaml), so single-writer semantics for the SQLite metadata store hold regardless.
+# D-07: Miroir RWX with the filesystem storage driver, not S3 — this cluster has no MinIO and
+# no object store, so the S3 driver would mean standing up a second new component inside this
+# plan. RWX on miroir-replicated is served as an NFS share by the Miroir gateway (gateway.enabled
+# in the miroir HelmRelease); the volume is a normal single-writer DRBD volume under the hood.
+# gha-cache-server runs strategy: Recreate with exactly one replica (see helmrelease.yaml), so
+# single-writer semantics for the SQLite metadata store hold regardless. The cache starts empty
+# after the Ceph-to-Miroir rebuild; it is a cache and refills on demand.
 #
 # Sizing: 20Gi, twice GitHub's own 10 GB/repo reference point (39-CONTEXT.md's stated yardstick),
 # combined with a 14-day cleanup window (CACHE_CLEANUP_OLDER_THAN_DAYS in helmrelease.yaml, shorter
@@ -21,4 +24,4 @@ spec:
   resources:
     requests:
       storage: 20Gi
-  storageClassName: ceph-filesystem
+  storageClassName: miroir-replicated

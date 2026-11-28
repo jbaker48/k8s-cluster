@@ -11,6 +11,7 @@ spec:
     labels:
       app.kubernetes.io/name: *app
   dependsOn:
+    - name: miroir-config
     - name: actions-runner-controller
   path: ./kubernetes/apps/arc-runners/gha-cache-server/app
   prune: true

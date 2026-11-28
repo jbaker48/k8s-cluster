@@ -50,7 +50,7 @@ tasks:
     desc: Create privileged namespaces before Flux takes over
     cmds:
       - echo "Creating privileged namespaces..."
-      - kubectl apply --server-side --filename {{.KUBERNETES_DIR}}/apps/rook-ceph/namespace.yaml
+      - kubectl apply --server-side --filename {{.KUBERNETES_DIR}}/apps/miroir-system/namespace.yaml
       - kubectl apply --server-side --filename {{.KUBERNETES_DIR}}/apps/observability/namespace.yaml
       - kubectl apply --server-side --filename {{.KUBERNETES_DIR}}/apps/network/namespace.yaml
       - kubectl apply --server-side --filename {{.KUBERNETES_DIR}}/apps/openebs-system/namespace.yaml

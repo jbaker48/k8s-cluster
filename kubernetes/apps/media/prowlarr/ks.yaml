@@ -11,7 +11,9 @@ spec:
     labels:
       app.kubernetes.io/name: *app
   dependsOn:
+    - name: miroir-config
     - name: external-secrets-stores
+    - name: volsync
   path: ./kubernetes/apps/media/prowlarr/app
   prune: true
   sourceRef:

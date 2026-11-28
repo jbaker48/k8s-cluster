@@ -65,7 +65,7 @@ spec:
                   exclude:
                     - kube-system
                     - flux-system
-                    - rook-ceph
+                    - miroir-system
                     - database
             - name: RemoveFailedPods
               args:

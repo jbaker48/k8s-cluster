@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Pre-flight gate for the Ceph -> Miroir rebuild.
+# Pre-flight gate for the Miroir rebuild.
 # Blocks teardown until every backup is proven fresh.
 # Usage: rebuild-preflight.sh [--max-age-minutes N]   (default 90)
 # Exits 0 only if every check passes. Read-only against the cluster.

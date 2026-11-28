@@ -121,26 +121,12 @@ If you want to preserve Talos secrets for faster rebuild:
 task talos:reset -- --force
 ```
 
-### Cleaning Up Stuck Rook-Ceph Resources
+### Storage (Miroir)
 
-If Rook-Ceph resources are stuck during teardown:
-
-```bash
-# Remove finalizers from stuck resources
-task rook:remove-finalizers
-```
-
-### Wiping Ceph Data on Nodes
-
-For a completely fresh Ceph cluster, you may need to wipe OSD disks. Connect to each node:
-
-```bash
-# Check which disks have Ceph data
-talosctl -n 10.20.0.14 list /dev/disk/by-id/
-
-# The Ceph disks will need to be wiped during Talos reset
-# or manually cleared before rook-ceph-cluster deploys
-```
+Storage is now Miroir (Rook-Ceph has been removed). For a rebuild, follow
+Task 9 of `docs/superpowers/plans/2026-11-28-ceph-to-miroir-rebuild.md`:
+wipe the data disks with `talosctl wipe disk` before Miroir starts. For a
+volume reported as outdated, see `docs/runbooks/miroir-volume-outdated.md`.
 
 ---
 

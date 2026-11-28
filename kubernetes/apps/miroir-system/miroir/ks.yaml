@@ -3,17 +3,39 @@
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata:
-  name: &app rook-ceph
+  name: &app miroir
   namespace: flux-system
 spec:
-  targetNamespace: rook-ceph
+  targetNamespace: miroir-system
+  commonMetadata:
+    labels:
+      app.kubernetes.io/name: *app
+  path: ./kubernetes/apps/miroir-system/miroir/app
+  prune: false
+  sourceRef:
+    kind: GitRepository
+    name: home-kubernetes
+  wait: true
+  interval: 30m
+  retryInterval: 1m
+  timeout: 10m
+---
+# yaml-language-server: $schema=https://raw.githubusercontent.com/fluxcd-community/flux2-schemas/main/kustomization-kustomize-v1.json
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: &app miroir-config
+  namespace: flux-system
+spec:
+  targetNamespace: miroir-system
   commonMetadata:
     labels:
       app.kubernetes.io/name: *app
   dependsOn:
-    - name: external-secrets-stores
-  path: ./kubernetes/apps/rook-ceph/rook-ceph/app
-  prune: false # never should be deleted
+    - name: miroir
+    - name: snapshot-controller
+  path: ./kubernetes/apps/miroir-system/miroir/config
+  prune: false
   sourceRef:
     kind: GitRepository
     name: home-kubernetes
@@ -21,27 +43,3 @@ spec:
   interval: 30m
   retryInterval: 1m
   timeout: 5m
----
-# yaml-language-server: $schema=https://raw.githubusercontent.com/fluxcd-community/flux2-schemas/main/kustomization-kustomize-v1.json
-apiVersion: kustomize.toolkit.fluxcd.io/v1
-kind: Kustomization
-metadata:
-  name: &app rook-ceph-cluster
-  namespace: flux-system
-spec:
-  targetNamespace: rook-ceph
-  commonMetadata:
-    labels:
-      app.kubernetes.io/name: *app
-  dependsOn:
-    - name: external-secrets-stores
-    - name: rook-ceph
-  path: ./kubernetes/apps/rook-ceph/rook-ceph/cluster
-  prune: false # never should be deleted
-  sourceRef:
-    kind: GitRepository
-    name: home-kubernetes
-  wait: true
-  interval: 30m
-  retryInterval: 1m
-  timeout: 15m

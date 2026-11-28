@@ -14,7 +14,7 @@ spec:
     # - name: external-secrets
     - name: external-secrets-stores
     - name: intel-device-plugin-gpu
-    - name: rook-ceph-cluster
+    - name: miroir-config
     - name: mosquitto
     - name: volsync
   path: ./kubernetes/apps/home/frigate/app

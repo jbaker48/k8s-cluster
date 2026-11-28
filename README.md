@@ -68,7 +68,7 @@ The cluster includes organized applications by namespace:
 - **Observability** - Monitoring and logging
 - **Security** - Authentication and security tools
 - **Self-hosted** - Personal productivity apps
-- **Storage** - Rook Ceph, OpenEBS
+- **Storage** - Miroir, OpenEBS
 - **Tools** - Development and admin utilities
 
 ## Key Features
@@ -77,7 +77,7 @@ The cluster includes organized applications by namespace:
 - **Automated Dependency Updates** - Renovate bot integration
 - **Encrypted Secrets** - SOPS with age encryption
 - **High Availability** - Multi-node control plane
-- **Persistent Storage** - Ceph distributed storage
+- **Persistent Storage** - Miroir replicated block storage
 - **SSL Certificates** - Automated Let's Encrypt certs
 - **Backup & Sync** - VolSync for data protection
 
@@ -98,7 +98,7 @@ flux get kustomizations -A
 
 ## Storage
 
-- **Rook Ceph** - Distributed block/object/filesystem storage
+- **Miroir** - Replicated block storage on DRBD
 - **OpenEBS** - Local persistent volumes
 - **VolSync** - Backup and replication
 

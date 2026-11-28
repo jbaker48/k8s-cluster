@@ -85,21 +85,21 @@
       "automerge": false
     },
     {
-      "description": "Rook-Ceph updates require dashboard approval before a PR opens (not an owner-identity check).",
-      "matchDatasources": ["helm"],
-      "matchPackageNames": ["rook-ceph", "rook-ceph-cluster"],
+      "description": "Miroir updates require dashboard approval before a PR opens (not an owner-identity check).",
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["ghcr.io/home-operations/charts/miroir"],
       "dependencyDashboardApproval": true,
       "automerge": false
     },
     // groups
     // Broad non-major groups come first so the specific groups below override them.
-    // Talos, Kubernetes, Cilium, Rook-Ceph and Flux are excluded and keep their own rules.
+    // Talos, Kubernetes, Cilium, Miroir and Flux are excluded and keep their own rules.
     {
       "description": "One PR for non-major container image updates.",
       "groupName": "non-major container images",
       "matchDatasources": ["docker"],
       "matchUpdateTypes": ["minor", "patch", "digest"],
-      "matchPackageNames": ["*", "!/siderolabs\\//", "!/cilium/", "!rook-ceph", "!rook-ceph-cluster", "!/(^|/)kube(let|-apiserver|-controller-manager|-scheduler|-proxy|ctl)$/", "!/fluxcd/", "!/(^|/)charts?//"],
+      "matchPackageNames": ["*", "!/siderolabs\\//", "!/cilium/", "!/(^|/)kube(let|-apiserver|-controller-manager|-scheduler|-proxy|ctl)$/", "!/fluxcd/", "!/(^|/)charts?//"],
       "group": {
         "commitMessageTopic": "{{{groupName}}}"
       }
@@ -109,7 +109,7 @@
       "groupName": "non-major helm charts",
       "matchDatasources": ["helm"],
       "matchUpdateTypes": ["minor", "patch"],
-      "matchPackageNames": ["*", "!/siderolabs\\//", "!/cilium/", "!rook-ceph", "!rook-ceph-cluster", "!/(^|/)kube(let|-apiserver|-controller-manager|-scheduler|-proxy|ctl)$/", "!/fluxcd/"],
+      "matchPackageNames": ["*", "!/siderolabs\\//", "!/cilium/", "!/(^|/)kube(let|-apiserver|-controller-manager|-scheduler|-proxy|ctl)$/", "!/fluxcd/"],
       "group": {
         "commitMessageTopic": "{{{groupName}}}"
       }
@@ -119,7 +119,7 @@
       "groupName": "non-major helm charts",
       "matchDatasources": ["docker"],
       "matchUpdateTypes": ["minor", "patch"],
-      "matchPackageNames": ["/(^|/)charts?//", "!/siderolabs\\//", "!/cilium/", "!rook-ceph", "!rook-ceph-cluster", "!/(^|/)kube(let|-apiserver|-controller-manager|-scheduler|-proxy|ctl)$/", "!/fluxcd/"],
+      "matchPackageNames": ["/(^|/)charts?//", "!ghcr.io/home-operations/charts/miroir", "!/siderolabs\\//", "!/cilium/", "!/(^|/)kube(let|-apiserver|-controller-manager|-scheduler|-proxy|ctl)$/", "!/fluxcd/"],
       "group": {
         "commitMessageTopic": "{{{groupName}}}"
       }
@@ -149,9 +149,10 @@
       "groupName": "Talos",
       "matchPackageNames": [
         "/siderolabs/talosctl/",
-        "/siderolabs/installer/"
+        "/siderolabs/installer/",
+        "siderolabs/talos"
       ],
-      "matchDatasources": ["docker"],
+      "matchDatasources": ["docker", "github-releases"],
       "group": {
         "commitMessageTopic": "{{{groupName}}} group"
       },
@@ -161,15 +162,6 @@
       "description": "Group the bootstrap Cilium chart and Flux HelmRelease together.",
       "groupName": "Cilium",
       "matchPackageNames": ["/cilium/"],
-      "group": {
-        "commitMessageTopic": "{{{groupName}}} group"
-      }
-    },
-    {
-      "description": "Group the Rook-Ceph operator and cluster charts in lockstep.",
-      "groupName": "Rook-Ceph",
-      "matchDatasources": ["helm"],
-      "matchPackageNames": ["rook-ceph", "rook-ceph-cluster"],
       "group": {
         "commitMessageTopic": "{{{groupName}}} group"
       }

@@ -18,7 +18,9 @@ spec:
     kind: GitRepository
     name: home-kubernetes
   dependsOn:
+    - name: miroir-config
     - name: external-secrets-stores
+    - name: volsync
   wait: true
   interval: 30m
   retryInterval: 1m

@@ -74,7 +74,7 @@ rules:
       - monitoring.coreos.com
       - cert-manager.io
       - acme.cert-manager.io
-      - ceph.rook.io
+      - miroir.home-operations.com
       - objectbucket.io
       - volsync.backube
       - openebs.io

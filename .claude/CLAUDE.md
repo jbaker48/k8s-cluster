@@ -48,7 +48,7 @@ An AI-assisted auto-merge pipeline for this cluster's GitOps repo. Every open PR
 - SOPS (Mozilla) - Encrypted secret management with age encryption
 - Age - Modern encryption tool for secret storage
 - Doppler - External secret provider (via External Secrets Operator)
-- Rook Ceph - Distributed storage platform
+- Miroir - Replicated block storage (DRBD)
 - OpenEBS - Open source container-attached storage
 - VolSync - Volume snapshot and backup orchestration
 - Restic - Backup engine (used by VolSync)
@@ -92,7 +92,7 @@ An AI-assisted auto-merge pipeline for this cluster's GitOps repo. Every open PR
 - bitnami (OCI), bjw-s (OCI), cilium, cloudnative-pg, coredns, external-dns, external-secrets
 - fairwinds, fluxcd-community (OCI), grafana, hajimari, influxdata, ingress-nginx
 - jetstack, k8s-gateway, kyverno, metrics-server, node-feature-discovery, openebs
-- prometheus-community (OCI), rook-ceph, spegel (OCI), stakater (OCI), vmware-tanzu, weave-gitops (OCI)
+- prometheus-community (OCI), spegel (OCI), stakater (OCI), vmware-tanzu, weave-gitops (OCI)
 
 ## Configuration Files
 

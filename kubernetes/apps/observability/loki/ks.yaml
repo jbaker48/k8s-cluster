@@ -11,7 +11,7 @@ spec:
     labels:
       app.kubernetes.io/name: *app
   dependsOn:
-    - name: rook-ceph-cluster
+    - name: miroir-config
   path: ./kubernetes/apps/observability/loki/app
   prune: true
   sourceRef:

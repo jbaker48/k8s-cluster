@@ -11,8 +11,10 @@ spec:
     labels:
       app.kubernetes.io/name: *app
   dependsOn:
+    - name: miroir-config
     - name: mosquitto
     - name: external-secrets-stores
+    - name: volsync
   path: ./kubernetes/apps/home/home-assistant-v2/app
   prune: true
   sourceRef:

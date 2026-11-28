@@ -16,6 +16,7 @@ spec:
     - name: intel-device-plugin-gpu
     - name: rook-ceph-cluster
     - name: mosquitto
+    - name: volsync
   path: ./kubernetes/apps/home/frigate/app
   prune: true
   sourceRef:
@@ -34,3 +35,5 @@ spec:
       APP: *app
       VOLSYNC_CAPACITY: 5Gi
       VOLSYNC_SCHEDULE: "5 * * * *"
+      # Data is root-owned (app runs privileged as root, lost+found is 0700); the mover must run as root.
+      VOLSYNC_MOVER_UID: "0"

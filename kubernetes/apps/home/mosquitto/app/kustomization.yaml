@@ -8,6 +8,7 @@ resources:
   - ./externalsecret.yaml
   - ./helmrelease.yaml
   - ./ocirepository.yaml
+  - ../../../../templates/volsync/source
 configMapGenerator:
   - name: mosquitto-configmap
     files:

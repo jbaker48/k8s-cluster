@@ -10,6 +10,8 @@ spec:
   commonMetadata:
     labels:
       app.kubernetes.io/name: *app
+  dependsOn:
+    - name: volsync
   path: ./kubernetes/apps/home/matter-server/app
   prune: true
   sourceRef:
@@ -19,3 +21,10 @@ spec:
   interval: 30m
   retryInterval: 1m
   timeout: 5m
+  postBuild:
+    substitute:
+      APP: *app
+      VOLSYNC_CAPACITY: 1Gi
+      VOLSYNC_SCHEDULE: "30 * * * *"
+      # Data is root-owned 0600 (app runs as root); the mover must run as root.
+      VOLSYNC_MOVER_UID: "0"

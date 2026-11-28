@@ -58,7 +58,7 @@ spec:
       endpointURL: ${SECRET_S3_URL}
       # Note: serverName version needs to be inclemented
       # when recovering from an existing cnpg cluster
-      serverName: &currentCluster postgres17-v3
+      serverName: &currentCluster postgres17-v4
       s3Credentials:
         accessKeyId:
           name: cloudnative-pg-secrets
@@ -70,7 +70,7 @@ spec:
   # cluster when recovering from an existing cnpg cluster
   bootstrap:
     recovery:
-      source: &previousCluster postgres17-v2
+      source: &previousCluster postgres17-v3
   externalClusters:
     - name: *previousCluster
       barmanObjectStore:

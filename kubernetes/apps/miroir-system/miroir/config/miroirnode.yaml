@@ -1,0 +1,30 @@
+---
+apiVersion: miroir.home-operations.com/v1alpha1
+kind: MiroirNode
+metadata:
+  name: talos01
+spec:
+  pools:
+    - name: default
+      lvmthin:
+        device: /dev/disk/by-id/ata-CT500MX500SSD1_2432E8BE7312
+---
+apiVersion: miroir.home-operations.com/v1alpha1
+kind: MiroirNode
+metadata:
+  name: talos02
+spec:
+  pools:
+    - name: default
+      lvmthin:
+        device: /dev/disk/by-id/ata-Timetec_SD08_TS250325A512G0088
+---
+apiVersion: miroir.home-operations.com/v1alpha1
+kind: MiroirNode
+metadata:
+  name: talos03
+spec:
+  pools:
+    - name: default
+      lvmthin:
+        device: /dev/disk/by-id/ata-CT500MX500SSD1_2403E88F7DD2

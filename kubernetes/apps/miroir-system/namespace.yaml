@@ -9,4 +9,3 @@ metadata:
     pod-security.kubernetes.io/warn: privileged
   annotations:
     kustomize.toolkit.fluxcd.io/prune: disabled
-    volsync.backube/privileged-movers: "true"

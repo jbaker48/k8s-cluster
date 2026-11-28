@@ -8,3 +8,6 @@ metadata:
     pod-security.kubernetes.io/enforce: privileged
     pod-security.kubernetes.io/audit: privileged
     pod-security.kubernetes.io/warn: privileged
+  annotations:
+    # Root (UID 0) movers need CHOWN/FOWNER to restore ownership.
+    volsync.backube/privileged-movers: "true"

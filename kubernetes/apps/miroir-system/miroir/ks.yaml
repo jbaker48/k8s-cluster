@@ -33,6 +33,7 @@ spec:
       app.kubernetes.io/name: *app
   dependsOn:
     - name: miroir
+    - name: snapshot-controller
   path: ./kubernetes/apps/miroir-system/miroir/config
   prune: false
   sourceRef:

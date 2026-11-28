@@ -27,5 +27,3 @@ spec:
         enabled: true
       dashboards:
         enabled: true
-        labels:
-          grafana_dashboard: "1"

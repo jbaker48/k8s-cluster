@@ -82,6 +82,15 @@ tasks:
       - validate:consistency
     cmd: echo "🎉 All validation checks completed successfully!"
 
+  rebuild:preflight:
+    desc: Verify every backup is fresh before the Ceph to Miroir teardown
+    preconditions:
+      - sh: which kubectl
+        msg: kubectl is required
+      - sh: which jq
+        msg: jq is required
+    cmd: '{{.SCRIPTS_DIR}}/rebuild-preflight.sh {{.CLI_ARGS}}'
+
   fix:schemas:
     desc: Automatically fix common schema issues
     cmd: |
